@@ -94,3 +94,4 @@ CSR 旧名/zicsr 补丁、配置),无需手改内核源码。完整背景见
 - SBI 引导器:[ultraembedded/riscv-linux-boot](https://github.com/ultraembedded/riscv-linux-boot)
 - Linux 5.4 · BusyBox 1.37.0 · RISC-V GNU 工具链(均自源码编译)
 # QRISC-V996
+# QRISC-V996
