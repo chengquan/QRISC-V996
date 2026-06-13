@@ -38,6 +38,16 @@ begin
     repeat (6) @(posedge clk);
 end
 endtask
+// SBA 写一个字(每次重设 sbcs:32位、不自增、不readonaddr)
+task sba_wr(input [31:0] addr, input [31:0] val);
+    reg [31:0] r; reg [1:0] resp;
+begin
+    t_dmi(T_SBCS,    32'h0004_0000, 2'd2, r, resp);  // sbaccess=2, autoinc=0, readonaddr=0
+    t_dmi(T_SBADDR0, addr,          2'd2, r, resp);
+    t_dmi(T_SBDATA0, val,           2'd2, r, resp);  // 写数据触发总线写
+    repeat (8) @(posedge clk);
+end
+endtask
 // 打印到屏幕 + 文件
 task pr(input [1023:0] s);
 begin $display("%0s", s); $fwrite(dt_f, "%0s\n", s); $fflush(dt_f); end
@@ -108,13 +118,9 @@ initial begin : DBG_FAST_TEST
         end
 
         // ---- 里程碑D:软件断点(ebreak->进调试)----
-        // 经 SBA 往 DRAM 0x80200000 写 ebreak(0x00100073)+ 后面写无限循环占位
-        t_dmi(T_SBCS,    32'h0004_0000, 2'd2, dt_rd, dt_resp);
-        t_dmi(T_SBADDR0, 32'h8020_0004, 2'd2, dt_rd, dt_resp);
-        t_dmi(T_SBDATA0, 32'h0000_0073, 2'd2, dt_rd, dt_resp);   // 0x80200004: ebreak
-        // 0x80200000: 一条 nop(0x13)让 PC 自然走到 ebreak
-        t_dmi(T_SBADDR0, 32'h8020_0000, 2'd2, dt_rd, dt_resp);
-        t_dmi(T_SBDATA0, 32'h0000_0013, 2'd2, dt_rd, dt_resp);   // nop
+        // 用专门的写任务(每次重设 sbcs 关自增 + 写地址 + 写数据),避免地址错位
+        sba_wr(32'h8020_0000, 32'h0000_0013);   // 0x80200000: nop
+        sba_wr(32'h8020_0004, 32'h0000_0073);   // 0x80200004: ebreak
         repeat (40) @(posedge clk);
         // 诊断:SBA 读回确认 nop/ebreak 真落进 DRAM
         t_dmi(T_SBCS,    32'h0014_0000, 2'd2, dt_rd, dt_resp);  // readonaddr
