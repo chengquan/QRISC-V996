@@ -180,6 +180,11 @@ module biriscv_issue
     // 调试:dbg_halt_i=1 时停止发射/取指接收(流水线排空 -> halt);dbg_pc_o = 下一条待发射 PC
     ,input           dbg_halt_i
     ,output [ 31:0]  dbg_pc_o
+    // 调试读写 GPR(halt 时复用空闲的 ra1/rd1 端口):
+    ,input  [  4:0]  dbg_reg_idx_i
+    ,output [ 31:0]  dbg_reg_rdata_o
+    ,input           dbg_reg_we_i
+    ,input  [ 31:0]  dbg_reg_wdata_i
 );
 
 
@@ -758,11 +763,11 @@ u_regfile
     .clk_i(clk_i),
     .rst_i(rst_i),
 
-    // Write ports
+    // Write ports(halt 且 dbg_reg_we 时,写口1 改写调试目标寄存器)
     .rd0_i(pipe0_rd_wb_w),
     .rd0_value_i(pipe0_result_wb_w),
-    .rd1_i(pipe1_rd_wb_w),
-    .rd1_value_i(pipe1_result_wb_w),
+    .rd1_i((dbg_halt_i && dbg_reg_we_i) ? dbg_reg_idx_i : pipe1_rd_wb_w),
+    .rd1_value_i((dbg_halt_i && dbg_reg_we_i) ? dbg_reg_wdata_i : pipe1_result_wb_w),
 
     // Read ports
     .ra0_i(issue_a_ra_idx_w),
@@ -770,11 +775,14 @@ u_regfile
     .ra0_value_o(issue_a_ra_value_w),
     .rb0_value_o(issue_a_rb_value_w),
 
-    .ra1_i(issue_b_ra_idx_w),
+    // 读口 ra1:halt 时改读调试目标寄存器(否则用正常 issue_b 操作数)
+    .ra1_i(dbg_halt_i ? dbg_reg_idx_i : issue_b_ra_idx_w),
     .rb1_i(issue_b_rb_idx_w),
     .ra1_value_o(issue_b_ra_value_w),
-    .rb1_value_o(issue_b_rb_value_w)    
+    .rb1_value_o(issue_b_rb_value_w)
 );
+// 调试读出 = ra1 读口的值(halt 时即调试目标寄存器)
+assign dbg_reg_rdata_o = issue_b_ra_value_w;
 
 //-------------------------------------------------------------
 // Issue Slot 0

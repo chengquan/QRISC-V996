@@ -7,9 +7,31 @@
 // 直接 include 进 tb_soc.v(共用 jtag_tck/tms/tdi/tdo 与 clk)。
 //-----------------------------------------------------------------
 
-localparam integer JT_HOLD = 20;            // 每个 TCK 相位保持的系统时钟数(>桥同步深度)
+localparam integer JT_HOLD = 6;             // 每个 TCK 相位保持的系统时钟数(>同步链深度 ~3,够用且快)
 localparam [6:0] DMI_SBCS=7'h38, DMI_SBADDR0=7'h39, DMI_SBDATA0=7'h3c;
 localparam [6:0] DMI_DMCONTROL=7'h10, DMI_DMSTATUS=7'h11, DMI_DPC=7'h40;
+localparam [6:0] DMI_DATA0=7'h04, DMI_ABSTRACTCS=7'h16, DMI_COMMAND=7'h17;
+
+// 抽象命令:读 regno -> data0(两段 DMI 取回)
+task abs_read_reg(input [15:0] regno, output [31:0] val);
+    reg [31:0] r; reg [1:0] resp;
+begin
+    jt_dmi(DMI_COMMAND, {8'd0,5'd0,1'b1/*transfer*/,1'b0/*read*/,regno}, 2'd2, r, resp);
+    repeat (20) @(posedge clk);
+    jt_dmi(DMI_DATA0, 32'b0, 2'd1, r, resp);
+    jt_dmi(DMI_DATA0, 32'b0, 2'd0, r, resp);
+    val = r;
+end
+endtask
+// 抽象命令:写 val -> regno
+task abs_write_reg(input [15:0] regno, input [31:0] val);
+    reg [31:0] r; reg [1:0] resp;
+begin
+    jt_dmi(DMI_DATA0,   val, 2'd2, r, resp);
+    jt_dmi(DMI_COMMAND, {8'd0,5'd0,1'b1,1'b1/*write*/,regno}, 2'd2, r, resp);
+    repeat (20) @(posedge clk);
+end
+endtask
 reg jt_tdo_s;
 
 // 一个 TCK 节拍:在 tck=0 时设好 tms/tdi,采样 TDO(上次下降沿稳定),再 升->降
@@ -142,11 +164,29 @@ initial begin : JTAG_SELFTEST
         // 旁证:DUT 内部 dbg_halt/halted 真值 + PC 是否在代码区(0x8xxxxxxx)
         if (jt_rd[31:28]==4'h8) $display("[JTAGTEST]   用例4(halt + 读 PC):PASS  (PC 在代码区)");
         else begin $display("[JTAGTEST]   用例4:FAIL (PC=0x%08x 不在代码区)", jt_rd); jt_err=jt_err+1; end
+        // ---- 用例5(里程碑B):抽象命令读 misa / x10 / dpc,写 x10 再读回 ----
+        // (此时核已 halt)读 misa(CSR 0x301)—— examine 靠它,应为 rv32 值
+        abs_read_reg(16'h0301, jt_rd);
+        $display("[JTAGTEST] 抽象读 misa = 0x%08x", jt_rd);
+        if (jt_rd === 32'h4000_1101) $display("[JTAGTEST]   用例5a(读 misa):PASS");
+        else begin $display("[JTAGTEST]   用例5a:FAIL"); jt_err=jt_err+1; end
+        // 读 dpc(CSR 0x7b1),应 = halt 时 PC(代码区)
+        abs_read_reg(16'h07b1, jt_rd);
+        $display("[JTAGTEST] 抽象读 dpc = 0x%08x", jt_rd);
+        if (jt_rd[31:28]==4'h8) $display("[JTAGTEST]   用例5b(读 dpc):PASS");
+        else begin $display("[JTAGTEST]   用例5b:FAIL"); jt_err=jt_err+1; end
+        // 写 x10=0x1234ABCD,再读回
+        abs_write_reg(16'h100A, 32'h1234_ABCD);     // x10 = 0x1000+10
+        abs_read_reg (16'h100A, jt_rd);
+        $display("[JTAGTEST] 写 x10=0x1234ABCD,读回=0x%08x", jt_rd);
+        if (jt_rd === 32'h1234_ABCD) $display("[JTAGTEST]   用例5c(写/读 GPR x10):PASS");
+        else begin $display("[JTAGTEST]   用例5c:FAIL"); jt_err=jt_err+1; end
+
         // resume(写 resumereq bit30)
         jt_dmi(DMI_DMCONTROL, 32'h4000_0001, 2'd2, jt_rd, jt_resp);
         $display("[JTAGTEST] 已 resume(核应继续运行)");
 
-        if (jt_err==0) $display("[JTAGTEST] ===== 全部 PASS,JTAG/SBA + halt 链路工作 =====");
+        if (jt_err==0) $display("[JTAGTEST] ===== 全部 PASS,JTAG/SBA + halt + 寄存器读写 工作 =====");
         else           $display("[JTAGTEST] ===== %0d 个用例 FAIL =====", jt_err);
         $display("======================================================\n");
         $finish;

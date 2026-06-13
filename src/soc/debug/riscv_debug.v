@@ -19,9 +19,13 @@ module riscv_debug
     ,input            jtag_tdi_i
     ,output           jtag_tdo_o
     ,output           ndmreset_o
-    // 核 halt 接口(里程碑A:halt/resume + 读 PC)
+    // 核 halt + 寄存器读写接口
     ,output           dbg_halt_o
     ,input  [31:0]    dbg_pc_i
+    ,output [4:0]     dbg_reg_idx_o
+    ,input  [31:0]    dbg_reg_rdata_i
+    ,output           dbg_reg_we_o
+    ,output [31:0]    dbg_reg_wdata_o
     // AXI4 主口 -> soc.inport
     ,output           awvalid_o ,output [31:0] awaddr_o ,output [3:0] awid_o
     ,output [7:0]     awlen_o   ,output [1:0]  awburst_o ,input awready_i
@@ -67,6 +71,8 @@ dm_sba #(.ABITS(ABITS)) u_dm (
     ,.bus_done_i(bus_done), .bus_rdata_i(bus_rdata), .bus_err_i(bus_err)
     ,.ndmreset_o(ndmreset_o)
     ,.dbg_halt_o(dbg_halt_o), .dbg_pc_i(dbg_pc_i)
+    ,.dbg_reg_idx_o(dbg_reg_idx_o), .dbg_reg_rdata_i(dbg_reg_rdata_i)
+    ,.dbg_reg_we_o(dbg_reg_we_o), .dbg_reg_wdata_o(dbg_reg_wdata_o)
 );
 
 dm_axi_master u_axi (

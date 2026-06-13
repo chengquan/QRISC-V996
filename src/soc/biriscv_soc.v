@@ -148,9 +148,15 @@ u_core
     ,.axi_d_rvalid_i(cd_rvalid) ,.axi_d_rdata_i(cd_rdata) ,.axi_d_rresp_i(cd_rresp)
     ,.axi_d_rid_i(cd_rid) ,.axi_d_rlast_i(cd_rlast)
     ,.dbg_halt_i(dbg_halt) ,.dbg_pc_o(dbg_pc)
+    ,.dbg_reg_idx_i(dbg_reg_idx) ,.dbg_reg_rdata_o(dbg_reg_rdata)
+    ,.dbg_reg_we_i(dbg_reg_we) ,.dbg_reg_wdata_i(dbg_reg_wdata)
 );
 wire        dbg_halt;     // Debug Module -> core:请求暂停
 wire [31:0] dbg_pc;       // core -> Debug Module:下一条待发射 PC(= dpc)
+wire [4:0]  dbg_reg_idx;  // DM -> core:要读写的 GPR 号
+wire [31:0] dbg_reg_rdata;// core -> DM:GPR 读出
+wire        dbg_reg_we;   // DM -> core:写 GPR 使能
+wire [31:0] dbg_reg_wdata;// DM -> core:GPR 写值
 
 //-----------------------------------------------------------------
 // riscv_soc 的 soc:arb + tap + 全外设
@@ -173,6 +179,8 @@ riscv_debug u_debug
     ,.jtag_tdi_i(jtag_tdi_i), .jtag_tdo_o(jtag_tdo_o)
     ,.ndmreset_o()
     ,.dbg_halt_o(dbg_halt), .dbg_pc_i(dbg_pc)   // 暂停核 / 读核 PC
+    ,.dbg_reg_idx_o(dbg_reg_idx), .dbg_reg_rdata_i(dbg_reg_rdata)
+    ,.dbg_reg_we_o(dbg_reg_we), .dbg_reg_wdata_o(dbg_reg_wdata)
     ,.awvalid_o(dbg_awvalid), .awaddr_o(dbg_awaddr), .awid_o(dbg_awid)
     ,.awlen_o(dbg_awlen), .awburst_o(dbg_awburst), .awready_i(dbg_awready)
     ,.wvalid_o(dbg_wvalid), .wdata_o(dbg_wdata), .wstrb_o(dbg_wstrb)

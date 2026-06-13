@@ -43,12 +43,22 @@ module dm_sba
     // 核 halt 接口(里程碑A):haltreq -> dbg_halt_o;dbg_pc_i = 核下一条 PC(= dpc)
     ,output            dbg_halt_o
     ,input  [31:0]     dbg_pc_i
+    // 调试读写 GPR(里程碑B,抽象命令用)
+    ,output [4:0]      dbg_reg_idx_o
+    ,input  [31:0]     dbg_reg_rdata_i
+    ,output            dbg_reg_we_o
+    ,output [31:0]     dbg_reg_wdata_o
 );
 
 // DMI 寄存器地址
 localparam A_DMCONTROL=7'h10, A_DMSTATUS=7'h11,
-           A_DPC=7'h40,    // 非标准:读核 dpc(里程碑A;标准方式后续用抽象命令)
+           A_DPC=7'h40,    // 非标准:读核 dpc(里程碑A;另 abstract 命令也支持 0x7b1)
+           A_DATA0=7'h04, A_ABSTRACTCS=7'h16, A_COMMAND=7'h17,   // 抽象命令
            A_SBCS=7'h38, A_SBADDR0=7'h39, A_SBDATA0=7'h3c;
+// CSR 号(抽象命令 access register 的 regno)
+localparam [11:0] CSR_MISA=12'h301, CSR_DPC=12'h7b1, CSR_DCSR=12'h7b0;
+localparam [31:0] MISA_RV32IMA = 32'h4000_1101;   // MXL=1, A+I+M
+localparam [31:0] DCSR_VAL     = 32'h4000_0003;   // xdebugver=4, prv=3
 
 // dmstatus 位:[3:0]version=2 [7]authenticated [8]anyhalted [9]allhalted
 //             [10]anyrunning [11]allrunning
@@ -62,6 +72,19 @@ reg        halt_req_q;          // dbg_halt_o:请求核停止发射
 reg        halted_q;            // 核已 halt(流水线排空后)
 reg [4:0]  drain_q;             // halt 请求后等若干拍当作排空完成
 assign dbg_halt_o = halt_req_q;
+// ---- 抽象命令(读写 GPR/CSR;里程碑B)----
+reg [31:0] data0_q;          // 抽象数据寄存器(读出/写入的值)
+reg [15:0] abs_regno_q;      // 当前访问的 regno(0x1000+x = GPR;0x301/0x7bx = CSR)
+reg        abs_write_q;      // 1=写 0=读
+reg [1:0]  abs_go_q;         // 命令处理小状态:01=本拍发起,10=次拍取结果
+reg [2:0]  abs_cmderr_q;     // 0=ok 2=未支持
+reg        reg_we_q;
+assign dbg_reg_idx_o   = abs_regno_q[4:0];        // GPR 号(halt 时核读此寄存器)
+assign dbg_reg_we_o    = reg_we_q;
+assign dbg_reg_wdata_o = data0_q;
+wire abs_is_gpr = (abs_regno_q[15:5]==11'h080);   // 0x1000..0x101f
+// abstractcs:[3:0]datacount=1 [10:8]cmderr [12]busy=0 [28:24]progbufsize=0
+wire [31:0] abstractcs_rd = {3'b0,5'd0,11'b0,1'b0,1'b0,abs_cmderr_q,4'b0,4'd1};
 wire [31:0] dmstatus_rd =
     (1<<7) | 32'd2 |                                  // authenticated + version=2
     (halted_q  ? ((1<<9)|(1<<8)) : 32'b0) |          // all/any halted
@@ -121,6 +144,8 @@ always @(posedge clk_i or posedge rst_i)
 if (rst_i) begin
     dmactive_q<=1'b0; ndmreset_q<=1'b0;
     halt_req_q<=1'b0; halted_q<=1'b0; drain_q<=5'd0;
+    data0_q<=32'b0; abs_regno_q<=16'b0; abs_write_q<=1'b0; abs_go_q<=2'b0;
+    abs_cmderr_q<=3'b0; reg_we_q<=1'b0;
     sbreadonaddr_q<=1'b0; sbautoincrement_q<=1'b0; sbreadondata_q<=1'b0;
     sbaccess_q<=3'd2; sberror_q<=3'd0; sbbusy_q<=1'b0; sbbusyerror_q<=1'b0;
     sbaddr_q<=32'b0; sbdata_q<=32'b0;
@@ -129,10 +154,29 @@ if (rst_i) begin
 end else begin
     bus_req_q <= 1'b0;          // 默认拉低,仅发起那拍为 1
 
+    reg_we_q <= 1'b0;           // 写 GPR 使能仅脉冲一拍
+
     // ---- halt 排空:halt 请求后等 ~16 拍(流水线排空)-> 视为 halted ----
     if (halt_req_q && !halted_q) begin
         if (drain_q == 5'd16) halted_q <= 1'b1;
         else                  drain_q <= drain_q + 5'd1;
+    end
+
+    // ---- 抽象命令两拍处理:01=已发起(idx 稳定),10=取/写结果 ----
+    if (abs_go_q == 2'b01) abs_go_q <= 2'b10;
+    else if (abs_go_q == 2'b10) begin
+        abs_go_q <= 2'b00;
+        if (abs_write_q) begin
+            // 写:GPR -> 经 dbg_reg_we 脉冲;CSR(dpc/misa/dcsr)暂不支持写
+            if (abs_is_gpr) reg_we_q <= 1'b1;
+        end else begin
+            // 读:GPR 用核读出;CSR 用内置值
+            if (abs_is_gpr)                       data0_q <= dbg_reg_rdata_i;
+            else if (abs_regno_q[11:0]==CSR_MISA) data0_q <= MISA_RV32IMA;
+            else if (abs_regno_q[11:0]==CSR_DPC)  data0_q <= dbg_pc_i;
+            else if (abs_regno_q[11:0]==CSR_DCSR) data0_q <= DCSR_VAL;
+            else                                  abs_cmderr_q <= 3'd2; // 未支持
+        end
     end
 
     // ---- 总线事务完成:收数据、清 busy、按需自增地址 ----
@@ -165,6 +209,28 @@ end else begin
         A_DMSTATUS: dmi_rdata_q <= dmstatus_rd;
         //--------------------------------------------------
         A_DPC: dmi_rdata_q <= dbg_pc_i;     // 读核当前 PC(里程碑A)
+        //--------------------------------------------------
+        A_DATA0: begin
+            if (dmi_op_i==2'd2) data0_q <= dmi_wdata_i;   // 写抽象数据
+            dmi_rdata_q <= data0_q;
+        end
+        A_ABSTRACTCS: begin
+            if (dmi_op_i==2'd2 && dmi_wdata_i[10:8]!=3'b0) abs_cmderr_q <= 3'b0; // W1C
+            dmi_rdata_q <= abstractcs_rd;
+        end
+        A_COMMAND: begin
+            if (dmi_op_i==2'd2) begin       // 写 command = 发起一次 access register
+                // [31:24]cmdtype=0  [16]write  [15:0]regno  ([17]transfer)
+                if (dmi_wdata_i[31:24]==8'd0) begin
+                    abs_regno_q <= dmi_wdata_i[15:0];
+                    abs_write_q <= dmi_wdata_i[16];
+                    abs_go_q    <= 2'b01;
+                    abs_cmderr_q<= 3'b0;
+                end else
+                    abs_cmderr_q <= 3'd2;    // 其它 cmdtype 不支持
+            end
+            dmi_rdata_q <= 32'b0;
+        end
         //--------------------------------------------------
         A_SBCS: begin
             if (dmi_op_i==2'd2) begin   // write
