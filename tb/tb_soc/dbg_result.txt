@@ -1,0 +1,12 @@
+============ 调试快速自测(直驱 DMI)============
+[DBG] halt 后 dmstatus = 0x00000382
+[DBG]   halt:PASS
+[DBG] 读 misa = 0x40001101
+[DBG]   读 misa:PASS
+[DBG] 读 dpc = 0x8000015c
+[DBG]   读 dpc:PASS
+[DBG] 写 x10=0x1234ABCD,读回 = 0x1234abcd
+[DBG]   写/读 GPR x10:PASS
+[DBG] resume
+[DBG] ===== 调试快速自测 全 PASS =====
+ERR=0

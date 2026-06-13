@@ -159,7 +159,10 @@ u_core
     ,.dbg_halt_i(dbg_halt) ,.dbg_pc_o(dbg_pc)
     ,.dbg_reg_idx_i(dbg_reg_idx) ,.dbg_reg_rdata_o(dbg_reg_rdata)
     ,.dbg_reg_we_i(dbg_reg_we) ,.dbg_reg_wdata_i(dbg_reg_wdata)
+    ,.dbg_step_i(dbg_step) ,.dbg_issued_o(dbg_issued)
 );
+wire        dbg_step;     // DM -> core:单步(强制单发射)
+wire        dbg_issued;   // core -> DM:发射一条指令脉冲
 wire        dbg_halt;     // Debug Module -> core:请求暂停
 wire [31:0] dbg_pc;       // core -> Debug Module:下一条待发射 PC(= dpc)
 wire [4:0]  dbg_reg_idx;  // DM -> core:要读写的 GPR 号
@@ -190,6 +193,7 @@ riscv_debug u_debug
     ,.dbg_halt_o(dbg_halt), .dbg_pc_i(dbg_pc)   // 暂停核 / 读核 PC
     ,.dbg_reg_idx_o(dbg_reg_idx), .dbg_reg_rdata_i(dbg_reg_rdata)
     ,.dbg_reg_we_o(dbg_reg_we), .dbg_reg_wdata_o(dbg_reg_wdata)
+    ,.dbg_step_o(dbg_step), .dbg_issued_i(dbg_issued)
     // 测试 DMI 注入口(引出到 tb 顶层做快速自测)
     ,.tdmi_en_i(tdmi_en_i), .tdmi_req_i(tdmi_req_i), .tdmi_addr_i(tdmi_addr_i)
     ,.tdmi_wdata_i(tdmi_wdata_i), .tdmi_op_i(tdmi_op_i)

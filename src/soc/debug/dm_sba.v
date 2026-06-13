@@ -48,6 +48,9 @@ module dm_sba
     ,input  [31:0]     dbg_reg_rdata_i
     ,output            dbg_reg_we_o
     ,output [31:0]     dbg_reg_wdata_o
+    // 单步(里程碑C)
+    ,output            dbg_step_o
+    ,input             dbg_issued_i
 );
 
 // DMI 寄存器地址
@@ -79,6 +82,10 @@ reg        abs_write_q;      // 1=写 0=读
 reg [1:0]  abs_go_q;         // 命令处理小状态:01=本拍发起,10=次拍取结果
 reg [2:0]  abs_cmderr_q;     // 0=ok 2=未支持
 reg        reg_we_q;
+// ---- 单步(里程碑C)----
+reg        dcsr_step_q;       // 调试器设的单步标志(dcsr.step)
+reg        stepping_q;        // 正在单步窗口(已 resume,等一条指令发射)
+assign dbg_step_o = stepping_q;
 assign dbg_reg_idx_o   = abs_regno_q[4:0];        // GPR 号(halt 时核读此寄存器)
 assign dbg_reg_we_o    = reg_we_q;
 assign dbg_reg_wdata_o = data0_q;
@@ -146,6 +153,7 @@ if (rst_i) begin
     halt_req_q<=1'b0; halted_q<=1'b0; drain_q<=5'd0;
     data0_q<=32'b0; abs_regno_q<=16'b0; abs_write_q<=1'b0; abs_go_q<=2'b0;
     abs_cmderr_q<=3'b0; reg_we_q<=1'b0;
+    dcsr_step_q<=1'b0; stepping_q<=1'b0;
     sbreadonaddr_q<=1'b0; sbautoincrement_q<=1'b0; sbreadondata_q<=1'b0;
     sbaccess_q<=3'd2; sberror_q<=3'd0; sbbusy_q<=1'b0; sbbusyerror_q<=1'b0;
     sbaddr_q<=32'b0; sbdata_q<=32'b0;
@@ -155,6 +163,12 @@ end else begin
     bus_req_q <= 1'b0;          // 默认拉低,仅发起那拍为 1
 
     reg_we_q <= 1'b0;           // 写 GPR 使能仅脉冲一拍
+
+    // ---- 单步:resume 后核发射一条指令(dbg_issued)-> 立刻重新 halt ----
+    if (stepping_q && dbg_issued_i) begin
+        stepping_q <= 1'b0;
+        halt_req_q <= 1'b1; halted_q <= 1'b0; drain_q <= 5'd0;   // 重新排空->halted
+    end
 
     // ---- halt 排空:halt 请求后等 ~16 拍(流水线排空)-> 视为 halted ----
     if (halt_req_q && !halted_q) begin
@@ -167,8 +181,9 @@ end else begin
     else if (abs_go_q == 2'b10) begin
         abs_go_q <= 2'b00;
         if (abs_write_q) begin
-            // 写:GPR -> 经 dbg_reg_we 脉冲;CSR(dpc/misa/dcsr)暂不支持写
+            // 写:GPR -> dbg_reg_we 脉冲;dcsr -> 存 step 标志
             if (abs_is_gpr) reg_we_q <= 1'b1;
+            else if (abs_regno_q[11:0]==CSR_DCSR) dcsr_step_q <= data0_q[2];
         end else begin
             // 读:GPR 用核读出;CSR 用内置值
             if (abs_is_gpr)                       data0_q <= dbg_reg_rdata_i;
@@ -201,6 +216,7 @@ end else begin
                 end
                 if (dmi_wdata_i[30]) begin           // resumereq:恢复运行
                     halt_req_q <= 1'b0; halted_q <= 1'b0;
+                    if (dcsr_step_q) stepping_q <= 1'b1;  // 单步:只放一条指令
                 end
             end
             dmi_rdata_q <= {halt_req_q,30'b0, dmactive_q};

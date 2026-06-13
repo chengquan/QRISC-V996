@@ -39,10 +39,10 @@ end
 endtask
 // 打印到屏幕 + 文件
 task pr(input [1023:0] s);
-begin $display("%0s", s); $fwrite(dt_f, "%0s\n", s); end
+begin $display("%0s", s); $fwrite(dt_f, "%0s\n", s); $fflush(dt_f); end
 endtask
 task prv(input [1023:0] s, input [31:0] v);
-begin $display("%0s0x%08x", s, v); $fwrite(dt_f, "%0s0x%08x\n", s, v); end
+begin $display("%0s0x%08x", s, v); $fwrite(dt_f, "%0s0x%08x\n", s, v); $fflush(dt_f); end
 endtask
 
 integer dt_err;
@@ -85,7 +85,28 @@ initial begin : DBG_FAST_TEST
         ok = (dt_rd===32'h1234_ABCD); if (!ok) dt_err=dt_err+1;
         pr(ok ? "[DBG]   写/读 GPR x10:PASS" : "[DBG]   写/读 GPR x10:FAIL");
 
-        // 5) resume
+        // ---- 里程碑C:单步 ----
+        // 读当前 dpc(单步前 PC)
+        t_abs_read(16'h07b1, dt_rd);
+        prv("[DBG] 单步前 dpc = ", dt_rd);
+        begin : STEP_BLK reg [31:0] pc0; pc0 = dt_rd;
+        // 设 dcsr.step=1(写 dcsr bit2)
+        t_abs_write(16'h07b0, 32'h0000_0004);
+        // resume(带 step):dmcontrol resumereq + dmactive
+        t_dmi(T_DMCONTROL, 32'h4000_0001, 2'd2, dt_rd, dt_resp);
+        repeat (80) @(posedge clk);           // 等执行一条 + 重新 halt
+        t_dmi(T_DMSTATUS, 32'b0, 2'd1, dt_rd, dt_resp);
+        prv("[DBG] 单步后 dmstatus = ", dt_rd);
+        t_abs_read(16'h07b1, dt_rd);
+        prv("[DBG] 单步后 dpc = ", dt_rd);
+        ok = (dt_rd !== pc0) && (dt_rd[31:28]==4'h8);   // PC 变了且仍在代码区
+        if (!ok) dt_err=dt_err+1;
+        pr(ok ? "[DBG]   单步(PC 前进):PASS" : "[DBG]   单步:FAIL");
+        // 关 step,正常 resume
+        t_abs_write(16'h07b0, 32'h0);
+        end
+
+        // 6) resume
         t_dmi(T_DMCONTROL, 32'h4000_0001, 2'd2, dt_rd, dt_resp);
         pr("[DBG] resume");
         pr(dt_err==0 ? "[DBG] ===== 调试快速自测 全 PASS =====" : "[DBG] ===== 有 FAIL =====");

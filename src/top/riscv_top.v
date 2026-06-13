@@ -124,6 +124,8 @@ module riscv_top
     ,output [ 31:0]  dbg_reg_rdata_o
     ,input           dbg_reg_we_i
     ,input  [ 31:0]  dbg_reg_wdata_i
+    ,input           dbg_step_i
+    ,output          dbg_issued_o
 );
 
 wire           icache_valid_w;
@@ -265,6 +267,8 @@ u_core
     ,.dbg_reg_rdata_o(dbg_reg_rdata_o)
     ,.dbg_reg_we_i(dbg_reg_we_i)
     ,.dbg_reg_wdata_i(dbg_reg_wdata_i)
+    ,.dbg_step_i(dbg_step_i)
+    ,.dbg_issued_o(dbg_issued_o)
 );
 
 

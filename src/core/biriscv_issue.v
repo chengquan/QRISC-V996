@@ -185,6 +185,9 @@ module biriscv_issue
     ,output [ 31:0]  dbg_reg_rdata_o
     ,input           dbg_reg_we_i
     ,input  [ 31:0]  dbg_reg_wdata_i
+    // 单步:dbg_step_i=1 时强制单发射;dbg_issued_o = 主槽发射一条指令(脉冲)
+    ,input           dbg_step_i
+    ,output          dbg_issued_o
 );
 
 
@@ -709,8 +712,8 @@ begin
     // Stall - no issues...
     if (lsu_stall_i || stall_w || div_pending_q || csr_pending_q || dbg_halt_i)
         ;
-    // Secondary Slot (lsu, branch, alu, mul)
-    else if (dual_issue_ok_w && opcode_b_valid_r && opcode_a_accept_r &&
+    // Secondary Slot (lsu, branch, alu, mul) —— 单步时禁用副槽(强制单发射)
+    else if (dual_issue_ok_w && !dbg_step_i && opcode_b_valid_r && opcode_a_accept_r &&
         !(scoreboard_r[issue_b_ra_idx_w] || 
           scoreboard_r[issue_b_rb_idx_w] ||
           scoreboard_r[issue_b_rd_idx_w]))
@@ -783,6 +786,8 @@ u_regfile
 );
 // 调试读出 = ra1 读口的值(halt 时即调试目标寄存器)
 assign dbg_reg_rdata_o = issue_b_ra_value_w;
+// 单步:主槽发射一条指令的脉冲
+assign dbg_issued_o = opcode_a_issue_r;
 
 //-------------------------------------------------------------
 // Issue Slot 0
