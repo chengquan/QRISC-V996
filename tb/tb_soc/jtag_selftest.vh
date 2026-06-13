@@ -9,6 +9,7 @@
 
 localparam integer JT_HOLD = 20;            // 每个 TCK 相位保持的系统时钟数(>桥同步深度)
 localparam [6:0] DMI_SBCS=7'h38, DMI_SBADDR0=7'h39, DMI_SBDATA0=7'h3c;
+localparam [6:0] DMI_DMCONTROL=7'h10, DMI_DMSTATUS=7'h11, DMI_DPC=7'h40;
 reg jt_tdo_s;
 
 // 一个 TCK 节拍:在 tck=0 时设好 tms/tdi,采样 TDO(上次下降沿稳定),再 升->降
@@ -123,7 +124,29 @@ initial begin : JTAG_SELFTEST
         if (jt_rd !== 32'h0 && jt_rd[31:0] !== 32'hxxxxxxxx) $display("[JTAGTEST]   用例3(SBA 读镜像):PASS");
         else begin $display("[JTAGTEST]   用例3:FAIL"); jt_err=jt_err+1; end
 
-        if (jt_err==0) $display("[JTAGTEST] ===== 全部 PASS,JTAG/SBA 链路工作 =====");
+        // ---- 用例4(里程碑A):halt 核 -> 读 dmstatus.halted -> 读 PC -> resume ----
+        // 先确认核在跑(读 dmstatus,allrunning bit11=1, allhalted bit9=0)
+        jt_dmi(DMI_DMSTATUS, 32'b0, 2'd1, jt_rd, jt_resp);
+        jt_dmi(DMI_DMSTATUS, 32'b0, 2'd0, jt_rd, jt_resp);
+        $display("[JTAGTEST] halt 前 dmstatus=0x%08x (running bit11=%b halted bit9=%b)", jt_rd, jt_rd[11], jt_rd[9]);
+        // 写 dmcontrol haltreq(bit31)+ dmactive(bit0)
+        jt_dmi(DMI_DMCONTROL, 32'h8000_0001, 2'd2, jt_rd, jt_resp);
+        repeat (60) @(posedge clk);              // 等排空 + halted
+        jt_dmi(DMI_DMSTATUS, 32'b0, 2'd1, jt_rd, jt_resp);
+        jt_dmi(DMI_DMSTATUS, 32'b0, 2'd0, jt_rd, jt_resp);
+        $display("[JTAGTEST] halt 后 dmstatus=0x%08x (halted bit9=%b)", jt_rd, jt_rd[9]);
+        // 读核 PC(dpc)
+        jt_dmi(DMI_DPC, 32'b0, 2'd1, jt_rd, jt_resp);
+        jt_dmi(DMI_DPC, 32'b0, 2'd0, jt_rd, jt_resp);
+        $display("[JTAGTEST] halt 时核 PC(dpc) = 0x%08x", jt_rd);
+        // 旁证:DUT 内部 dbg_halt/halted 真值 + PC 是否在代码区(0x8xxxxxxx)
+        if (jt_rd[31:28]==4'h8) $display("[JTAGTEST]   用例4(halt + 读 PC):PASS  (PC 在代码区)");
+        else begin $display("[JTAGTEST]   用例4:FAIL (PC=0x%08x 不在代码区)", jt_rd); jt_err=jt_err+1; end
+        // resume(写 resumereq bit30)
+        jt_dmi(DMI_DMCONTROL, 32'h4000_0001, 2'd2, jt_rd, jt_resp);
+        $display("[JTAGTEST] 已 resume(核应继续运行)");
+
+        if (jt_err==0) $display("[JTAGTEST] ===== 全部 PASS,JTAG/SBA + halt 链路工作 =====");
         else           $display("[JTAGTEST] ===== %0d 个用例 FAIL =====", jt_err);
         $display("======================================================\n");
         $finish;

@@ -117,6 +117,9 @@ module riscv_top
     ,output [  7:0]  axi_d_arlen_o
     ,output [  1:0]  axi_d_arburst_o
     ,output          axi_d_rready_o
+    // 调试 halt 接口(给外部 Debug Module)
+    ,input           dbg_halt_i
+    ,output [ 31:0]  dbg_pc_o
 );
 
 wire           icache_valid_w;
@@ -252,6 +255,8 @@ u_core
     ,.mem_i_flush_o(icache_flush_w)
     ,.mem_i_invalidate_o(icache_invalidate_w)
     ,.mem_i_pc_o(icache_pc_w)
+    ,.dbg_halt_i(dbg_halt_i)
+    ,.dbg_pc_o(dbg_pc_o)
 );
 
 

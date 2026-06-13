@@ -177,6 +177,9 @@ module biriscv_issue
     ,output          exec1_hold_o
     ,output          mul_hold_o
     ,output          interrupt_inhibit_o
+    // 调试:dbg_halt_i=1 时停止发射/取指接收(流水线排空 -> halt);dbg_pc_o = 下一条待发射 PC
+    ,input           dbg_halt_i
+    ,output [ 31:0]  dbg_pc_o
 );
 
 
@@ -683,7 +686,7 @@ begin
         scoreboard_r = 32'hFFFFFFFF;
 
     // Stall - no issues...
-    if (lsu_stall_i || stall_w || div_pending_q || csr_pending_q)
+    if (lsu_stall_i || stall_w || div_pending_q || csr_pending_q || dbg_halt_i)
         ;
     // Primary slot (lsu, branch, alu, mul, div, csr)
     else if (opcode_a_valid_r &&
@@ -699,7 +702,7 @@ begin
     end
 
     // Stall - no issues...
-    if (lsu_stall_i || stall_w || div_pending_q || csr_pending_q)
+    if (lsu_stall_i || stall_w || div_pending_q || csr_pending_q || dbg_halt_i)
         ;
     // Secondary Slot (lsu, branch, alu, mul)
     else if (dual_issue_ok_w && opcode_b_valid_r && opcode_a_accept_r &&
@@ -728,8 +731,11 @@ assign exec1_opcode_valid_o = opcode_b_issue_r;
 assign dual_issue_w         = opcode_b_issue_r & opcode_b_accept_r & ~take_interrupt_i;
 assign single_issue_w       = (opcode_a_issue_r & opcode_a_accept_r) & ~dual_issue_w & ~take_interrupt_i;
 
-assign fetch0_accept_o      = ((slot0_valid_r & opcode_a_accept_r) | slot1_valid_r) & ~take_interrupt_i;
-assign fetch1_accept_o      = ((slot1_valid_r & opcode_a_accept_r) | (opcode_b_accept_r)) & ~take_interrupt_i;
+assign fetch0_accept_o      = ((slot0_valid_r & opcode_a_accept_r) | slot1_valid_r) & ~take_interrupt_i & ~dbg_halt_i;
+assign fetch1_accept_o      = ((slot1_valid_r & opcode_a_accept_r) | (opcode_b_accept_r)) & ~take_interrupt_i & ~dbg_halt_i;
+
+// 调试 halt:下一条待发射 PC(供 dpc 显示);halt 时此值冻结
+assign dbg_pc_o             = pc_x_q;
 
 assign stall_w              = pipe0_stall_raw_w | pipe1_stall_raw_w;
 

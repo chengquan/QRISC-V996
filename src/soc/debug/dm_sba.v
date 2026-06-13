@@ -40,19 +40,32 @@ module dm_sba
     ,input             bus_err_i
     // 系统软复位请求(ndmreset),tb/soc 可选用
     ,output            ndmreset_o
+    // 核 halt 接口(里程碑A):haltreq -> dbg_halt_o;dbg_pc_i = 核下一条 PC(= dpc)
+    ,output            dbg_halt_o
+    ,input  [31:0]     dbg_pc_i
 );
 
 // DMI 寄存器地址
 localparam A_DMCONTROL=7'h10, A_DMSTATUS=7'h11,
+           A_DPC=7'h40,    // 非标准:读核 dpc(里程碑A;标准方式后续用抽象命令)
            A_SBCS=7'h38, A_SBADDR0=7'h39, A_SBDATA0=7'h3c;
 
-// dmstatus:version=2, authenticated=1, allrunning=anyrunning=1
-localparam [31:0] DMSTATUS = (1<<13)|(1<<12)|(1<<7)|32'd2;
+// dmstatus 位:[3:0]version=2 [7]authenticated [8]anyhalted [9]allhalted
+//             [10]anyrunning [11]allrunning
 
 //--------------------------------------------------------------
 // 寄存器
 //--------------------------------------------------------------
 reg        dmactive_q, ndmreset_q;
+// ---- halt 控制(里程碑A)----
+reg        halt_req_q;          // dbg_halt_o:请求核停止发射
+reg        halted_q;            // 核已 halt(流水线排空后)
+reg [4:0]  drain_q;             // halt 请求后等若干拍当作排空完成
+assign dbg_halt_o = halt_req_q;
+wire [31:0] dmstatus_rd =
+    (1<<7) | 32'd2 |                                  // authenticated + version=2
+    (halted_q  ? ((1<<9)|(1<<8)) : 32'b0) |          // all/any halted
+    (halted_q  ? 32'b0 : ((1<<11)|(1<<10)));         // all/any running
 reg        sbreadonaddr_q, sbautoincrement_q, sbreadondata_q;
 reg [2:0]  sbaccess_q;                 // 访问位宽:0=8b 1=16b 2=32b
 reg [2:0]  sberror_q;                  // 0=none 其它=错误
@@ -107,6 +120,7 @@ assign dmi_resp_o  = dmi_resp_q;
 always @(posedge clk_i or posedge rst_i)
 if (rst_i) begin
     dmactive_q<=1'b0; ndmreset_q<=1'b0;
+    halt_req_q<=1'b0; halted_q<=1'b0; drain_q<=5'd0;
     sbreadonaddr_q<=1'b0; sbautoincrement_q<=1'b0; sbreadondata_q<=1'b0;
     sbaccess_q<=3'd2; sberror_q<=3'd0; sbbusy_q<=1'b0; sbbusyerror_q<=1'b0;
     sbaddr_q<=32'b0; sbdata_q<=32'b0;
@@ -114,6 +128,12 @@ if (rst_i) begin
     dmi_rdata_q<=32'b0; dmi_resp_q<=2'b0;
 end else begin
     bus_req_q <= 1'b0;          // 默认拉低,仅发起那拍为 1
+
+    // ---- halt 排空:halt 请求后等 ~16 拍(流水线排空)-> 视为 halted ----
+    if (halt_req_q && !halted_q) begin
+        if (drain_q == 5'd16) halted_q <= 1'b1;
+        else                  drain_q <= drain_q + 5'd1;
+    end
 
     // ---- 总线事务完成:收数据、清 busy、按需自增地址 ----
     if (bus_done_i) begin
@@ -132,11 +152,19 @@ end else begin
             if (dmi_op_i==2'd2) begin   // write
                 dmactive_q <= dmi_wdata_i[0];
                 ndmreset_q <= dmi_wdata_i[1];
+                if (dmi_wdata_i[31]) begin           // haltreq:请求暂停
+                    halt_req_q <= 1'b1; drain_q <= 5'd0;
+                end
+                if (dmi_wdata_i[30]) begin           // resumereq:恢复运行
+                    halt_req_q <= 1'b0; halted_q <= 1'b0;
+                end
             end
-            dmi_rdata_q <= {30'b0, ndmreset_q, dmactive_q};
+            dmi_rdata_q <= {halt_req_q,30'b0, dmactive_q};
         end
         //--------------------------------------------------
-        A_DMSTATUS: dmi_rdata_q <= DMSTATUS;
+        A_DMSTATUS: dmi_rdata_q <= dmstatus_rd;
+        //--------------------------------------------------
+        A_DPC: dmi_rdata_q <= dbg_pc_i;     // 读核当前 PC(里程碑A)
         //--------------------------------------------------
         A_SBCS: begin
             if (dmi_op_i==2'd2) begin   // write

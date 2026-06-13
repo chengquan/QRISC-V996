@@ -83,6 +83,9 @@ module riscv_core
     ,output          mem_i_flush_o
     ,output          mem_i_invalidate_o
     ,output [ 31:0]  mem_i_pc_o
+    // 调试 halt 接口(经 riscv_top 引出到外部 Debug Module)
+    ,input           dbg_halt_i
+    ,output [ 31:0]  dbg_pc_o
 );
 
 wire           mmu_lsu_writeback_w;
@@ -683,6 +686,8 @@ u_issue
     ,.exec1_hold_o(exec1_hold_w)
     ,.mul_hold_o(mul_hold_w)
     ,.interrupt_inhibit_o(interrupt_inhibit_w)
+    ,.dbg_halt_i(dbg_halt_i)
+    ,.dbg_pc_o(dbg_pc_o)
 );
 
 
