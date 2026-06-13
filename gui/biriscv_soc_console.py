@@ -17,6 +17,7 @@ import re
 import time
 import codecs
 import queue
+import shutil
 import socket
 import threading
 import subprocess
@@ -150,6 +151,7 @@ class Console(tk.Tk):
 
         # ---- OpenOCD 调试控制台(底部,默认折叠成一行;连接后展开输出窗)----
         dbg = tk.Frame(self, bg=BG2); dbg.pack(side="bottom", fill="x")
+        # 第 1 行:连接 + 命令输入 + 内存读写(SBA,不暂停核)
         dbgbar = tk.Frame(dbg, bg=BG2); dbgbar.pack(side="top", fill="x")
         self.btn_ocd = tk.Button(dbgbar, text="🔌 连接 OpenOCD", command=self.ocd_toggle,
                                  bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
@@ -159,8 +161,8 @@ class Console(tk.Tk):
                                   relief="flat", font=("Monospace", 10), state="disabled")
         self.ocd_entry.pack(side="left", fill="x", expand=True, pady=4)
         self.ocd_entry.bind("<Return>", lambda e: self.ocd_send())
-        # 快捷:地址读写
-        tk.Label(dbgbar, text="地址", bg=BG2, fg="#999").pack(side="left", padx=(8, 2))
+        # 快捷:内存/外设读写(SBA,不暂停核)
+        tk.Label(dbgbar, text="内存", bg=BG2, fg="#999").pack(side="left", padx=(8, 2))
         self.ocd_addr = tk.Entry(dbgbar, width=12, bg="#3c3c3c", fg=FG, insertbackground=FG, relief="flat")
         self.ocd_addr.insert(0, "0x94000008"); self.ocd_addr.pack(side="left", pady=4)
         self.btn_rd = tk.Button(dbgbar, text="读", command=self.ocd_read, state="disabled",
@@ -171,6 +173,34 @@ class Console(tk.Tk):
         self.btn_wr = tk.Button(dbgbar, text="写", command=self.ocd_write, state="disabled",
                                 bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
         self.btn_wr.pack(side="left", padx=2, pady=4)
+
+        # 第 2 行:核调试(halt/单步/断点/寄存器/GDB)—— 连接后才启用
+        dbgbar2 = tk.Frame(dbg, bg=BG2); dbgbar2.pack(side="top", fill="x")
+        tk.Label(dbgbar2, text="核调试:", bg=BG2, fg="#999").pack(side="left", padx=(8, 2))
+        self.btn_halt = tk.Button(dbgbar2, text="⏸ 暂停", command=self.ocd_halt, state="disabled",
+                                  bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
+        self.btn_halt.pack(side="left", padx=2, pady=4)
+        self.btn_resume = tk.Button(dbgbar2, text="▶ 继续", command=self.ocd_resume, state="disabled",
+                                    bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
+        self.btn_resume.pack(side="left", padx=2, pady=4)
+        self.btn_step = tk.Button(dbgbar2, text="⤵ 单步", command=self.ocd_step, state="disabled",
+                                  bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
+        self.btn_step.pack(side="left", padx=2, pady=4)
+        self.btn_regs = tk.Button(dbgbar2, text="📋 寄存器", command=self.ocd_regs, state="disabled",
+                                  bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
+        self.btn_regs.pack(side="left", padx=2, pady=4)
+        # 软件断点:地址 + 设置
+        tk.Label(dbgbar2, text="断点@", bg=BG2, fg="#999").pack(side="left", padx=(10, 2))
+        self.ocd_bpaddr = tk.Entry(dbgbar2, width=12, bg="#3c3c3c", fg=FG, insertbackground=FG, relief="flat")
+        self.ocd_bpaddr.insert(0, "0x80200004"); self.ocd_bpaddr.pack(side="left", pady=4)
+        self.btn_bp = tk.Button(dbgbar2, text="设断点", command=self.ocd_bp_set, state="disabled",
+                                bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
+        self.btn_bp.pack(side="left", padx=2, pady=4)
+        # 启动 GDB(开新终端连 :3333)
+        self.btn_gdb = tk.Button(dbgbar2, text="🐞 启动 GDB", command=self.ocd_launch_gdb, state="disabled",
+                                 bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
+        self.btn_gdb.pack(side="left", padx=(10, 2), pady=4)
+
         self.ocd_out = scrolledtext.ScrolledText(dbg, bg="#15170f", fg="#cfe0b0", height=6,
                                                  font=("Monospace", 9), wrap="char",
                                                  relief="flat", padx=8, pady=4, state="disabled")
@@ -417,10 +447,13 @@ class Console(tk.Tk):
 
     def _ocd_connected(self):
         self.btn_ocd.configure(text="⛔ 断开 OpenOCD")
-        for w in (self.ocd_entry, self.btn_rd, self.btn_wr):
+        for w in (self.ocd_entry, self.btn_rd, self.btn_wr,
+                  self.btn_halt, self.btn_resume, self.btn_step, self.btn_regs,
+                  self.btn_bp, self.btn_gdb):
             w.configure(state="normal")
-        self._ocd_write("✅ 已连接。本核无调试模式,用 SBA(底层 DMI)读写,不走 mdw/mww:\n"
-                        "   右侧地址框 + 读/写 按钮,或敲:sba_read 0x80000000  /  sba_write 0x94000008 0xCAFE0000\n")
+        self._ocd_write("✅ 已连接(OpenOCD examine 通过,核支持完整调试):\n"
+                        "   核调试:⏸暂停 / ▶继续 / ⤵单步 / 📋寄存器 / 设软件断点 / 🐞启动GDB\n"
+                        "   内存/外设:地址框 + 读/写(经 SBA,不暂停核),或敲 sba_read/sba_write、halt、reg pc 等\n")
 
     def _ocd_recv(self):
         try:
@@ -458,6 +491,53 @@ class Console(tk.Tk):
         a = self.ocd_addr.get().strip(); v = self.ocd_wval.get().strip()
         if a and v: self.ocd_send(f"sba_write {a} {v}")
 
+    # ---- 核调试(走 .cfg 里的 dbg_* TCL 过程)----
+    def ocd_halt(self):
+        self.ocd_send("dbg_halt")               # 暂停 CPU(看 allhalted)
+
+    def ocd_resume(self):
+        self.ocd_send("dbg_resume")             # 恢复运行
+
+    def ocd_step(self):
+        self.ocd_send("dbg_step")               # 单步一条,回报新 pc
+
+    def ocd_regs(self):
+        self.ocd_send("dbg_regs")               # 打印 x0..x31 + pc(dpc)
+
+    def ocd_bp_set(self):
+        a = self.ocd_bpaddr.get().strip()
+        if a:
+            self.ocd_send("dbg_bp_enable")      # 开 dcsr.ebreakm
+            self.ocd_send(f"dbg_bp_set {a}")    # 在地址写 ebreak 当软件断点
+
+    def ocd_launch_gdb(self):
+        # 开一个新终端跑 gdb-multiarch 连 OpenOCD 的 gdb server(:3333)
+        gdb = None
+        for cand in ("gdb-multiarch", "riscv32-unknown-elf-gdb", "riscv-none-elf-gdb"):
+            if shutil.which(cand):
+                gdb = cand; break
+        if not gdb:
+            self._ocd_write("✗ 没装 RISC-V gdb:sudo apt install -y gdb-multiarch\n"); return
+        gdb_cmds = (f"{gdb} "
+                    "-ex 'set arch riscv:rv32' "
+                    "-ex 'set remotetimeout 300' "
+                    "-ex 'target extended-remote :3333'")
+        # 找一个可用的终端模拟器,开窗跑 gdb
+        for term, args in (("x-terminal-emulator", ["-e", "bash", "-c"]),
+                           ("gnome-terminal", ["--", "bash", "-c"]),
+                           ("xterm", ["-e", "bash", "-c"])):
+            if shutil.which(term):
+                try:
+                    subprocess.Popen([term] + args + [f"{gdb_cmds}; exec bash"], cwd=ROOT)
+                    self._ocd_write(f"🐞 已在新终端启动 {gdb},连 :3333。\n"
+                                    "   试:info reg pc sp a0  /  x/2xw 0x80000000  /  monitor step\n")
+                    return
+                except Exception as e:
+                    self._ocd_write(f"✗ 启动终端失败:{e}\n")
+        # 没有图形终端(如纯 WSL):给出手动命令
+        self._ocd_write("✗ 没找到图形终端。请手动在另一个终端运行:\n"
+                        f"   {gdb_cmds}\n")
+
     def ocd_disconnect(self):
         try:
             if self.ocd_sock:
@@ -471,7 +551,9 @@ class Console(tk.Tk):
             except Exception: pass
             self.ocd_proc = None
         self.btn_ocd.configure(text="🔌 连接 OpenOCD")
-        for w in (self.ocd_entry, self.btn_rd, self.btn_wr):
+        for w in (self.ocd_entry, self.btn_rd, self.btn_wr,
+                  self.btn_halt, self.btn_resume, self.btn_step, self.btn_regs,
+                  self.btn_bp, self.btn_gdb):
             w.configure(state="disabled")
         self._ocd_write("— 已断开 —\n")
 
