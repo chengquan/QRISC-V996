@@ -97,9 +97,9 @@ reg        dcsr_ebreakm_q;    // dcsr.ebreakm:ebreak 进调试
 reg [31:0] dpc_q;             // 调试 PC(halt 处 / ebreak 处 / 调试器改写)
 reg        bp_q;              // 本次 halt 由 ebreak 断点引起
 reg        dpc_written_q;     // 调试器改写过 dpc(resume 需重定向)
-reg [3:0]  redirect_q;        // 重定向保持计数(>0 时 dbg_redirect=1),等取指接受 branch
+reg [3:0]  redirect_q;        // 恢复后倒计时:到 ==2 时脉冲一拍 dbg_redirect(此时取指/issue已恢复)
 assign dbg_ebreakm_o    = dcsr_ebreakm_q;
-assign dbg_redirect_o   = (redirect_q != 4'd0);
+assign dbg_redirect_o   = (redirect_q == 4'd2);
 assign dbg_redirect_pc_o= dpc_q;
 assign dbg_reg_idx_o   = abs_regno_q[4:0];        // GPR 号(halt 时核读此寄存器)
 assign dbg_reg_we_o    = reg_we_q;
@@ -248,7 +248,7 @@ end else begin
                     halt_req_q <= 1'b0; halted_q <= 1'b0;
                     if (dcsr_step_q) stepping_q <= 1'b1;  // 单步:只放一条指令
                     // 断点命中过 或 调试器改写过 dpc -> 恢复时重定向取指到 dpc
-                    if (bp_q || dpc_written_q) redirect_q <= 4'd8;  // 保持 8 拍,确保取指接受跳转
+                    if (bp_q || dpc_written_q) redirect_q <= 4'd5;  // 倒计时:5->...->2(脉冲)->0
                     bp_q <= 1'b0; dpc_written_q <= 1'b0;
                 end
             end

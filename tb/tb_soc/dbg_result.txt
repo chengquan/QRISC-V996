@@ -12,8 +12,8 @@
 [DBG] 单步后 dpc = 0x80000160
 [DBG]   单步(PC 前进):PASS
 [DBG] 断点后 dmstatus = 0x00000c82
-[DBG] (诊断)未命中 -> 手动 halt 后核 PC = 0x80000180
-[DBG] 断点命中 dpc = 0x80000180
+[DBG] (诊断)未命中 -> 手动 halt 后核 PC = 0x80000188
+[DBG] 断点命中 dpc = 0x80000188
 [DBG]   软件断点:FAIL
 [DBG] resume
 [DBG] ===== 有 FAIL =====

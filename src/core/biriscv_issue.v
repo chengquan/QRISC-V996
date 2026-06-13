@@ -188,6 +188,9 @@ module biriscv_issue
     // 单步:dbg_step_i=1 时强制单发射;dbg_issued_o = 主槽发射一条指令(脉冲)
     ,input           dbg_step_i
     ,output          dbg_issued_o
+    // 调试恢复重定向:把 pc_x_q(期望 PC)也跳到 dpc(否则 issue 丢弃重定向后的取指)
+    ,input           dbg_redirect_i
+    ,input  [ 31:0]  dbg_redirect_pc_i
 );
 
 
@@ -212,6 +215,8 @@ reg   [1:0] priv_x_q;
 always @ (posedge clk_i or posedge rst_i)
 if (rst_i)
     pc_x_q <= 32'b0;
+else if (dbg_redirect_i)            // 调试重定向:最高优先级,期望 PC 跳到 dpc
+    pc_x_q <= dbg_redirect_pc_i;
 else if (branch_csr_request_i)
     pc_x_q <= branch_csr_pc_i;
 else if (branch_d_exec1_request_i)

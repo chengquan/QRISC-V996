@@ -710,6 +710,8 @@ u_issue
     ,.dbg_reg_wdata_i(dbg_reg_wdata_i)
     ,.dbg_step_i(dbg_step_i)
     ,.dbg_issued_o(dbg_issued_o)
+    ,.dbg_redirect_i(dbg_redirect_i)
+    ,.dbg_redirect_pc_i(dbg_redirect_pc_i)
 );
 
 
