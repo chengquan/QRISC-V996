@@ -413,6 +413,8 @@ class Console(tk.Tk):
             self._ocd_show(); self._ocd_write(f"✗ 找不到配置 {OPENOCD_CFG}\n"); return
         self._ocd_show()
         self._ocd_write("启动 openocd,连接仿真 JTAG…\n")
+        self.ocd_ready = False
+        self.ocd_log_ready = False        # 每次连接重置就绪标志(支持重连)
         try:
             self.ocd_proc = subprocess.Popen(
                 ["openocd", "-f", OPENOCD_CFG],
@@ -435,7 +437,8 @@ class Console(tk.Tk):
                 if (("Listening on port %d" % OCD_TELNET) in line
                         or "Examined RISC-V core" in line
                         or "starting gdb server" in line):
-                    self.after(0, self._ocd_ready)
+                    self.ocd_log_ready = True       # 持久标志:日志已确认 examine 完成
+                    self.after(0, self._ocd_ready)  # socket 若已就绪则立刻放行,否则由 _ocd_connected 补
         except Exception:
             pass
 
@@ -457,16 +460,24 @@ class Console(tk.Tk):
 
     def _ocd_connected(self):
         # telnet 的 TCP 连上了,但 OpenOCD 可能还在 examine(仿真里 bit-bang JTAG 慢)。
-        # 先只改按钮文案,输入框/按钮等 _ocd_ready(examine 完成)再启用,避免过早敲命令没反馈。
+        # 先只改按钮文案,输入框/按钮等 examine 完成再启用,避免过早敲命令没反馈。
         self.btn_ocd.configure(text="⛔ 断开 OpenOCD")
         self.ocd_ready = False
         self._ocd_write("⏳ 已连上 OpenOCD,正在 examine 核(仿真里较慢,请等「✅就绪」再操作)…\n")
         # 兜底:即使没在日志里匹配到就绪标志,25s 后也启用(避免卡住无法操作)
         self.after(25000, self._ocd_ready)
+        # ★竞态修复:examine 极快时,_ocd_log_reader 可能在 telnet socket 连上【之前】就
+        #   匹配到就绪行、调过 _ocd_ready(那时被 not ocd_sock 挡掉丢弃)。这里 socket 已就绪,
+        #   若日志早已确认 examine 完成,立刻补一次放行,不必干等 25s 兜底。
+        if getattr(self, "ocd_log_ready", False):
+            self._ocd_ready()
 
     def _ocd_ready(self):
-        if getattr(self, "ocd_ready", False) or not self.ocd_sock:
-            return                                # 只触发一次
+        # 放行条件:telnet socket 已连上(否则发命令没处发)。日志就绪/25s 兜底任一触发即可。
+        if getattr(self, "ocd_ready", False):
+            return                                # 只放行一次
+        if not self.ocd_sock:
+            return                                # socket 还没连上 -> 由 _ocd_connected 再补触发
         self.ocd_ready = True
         for w in (self.ocd_entry, self.btn_rd, self.btn_wr,
                   self.btn_halt, self.btn_resume, self.btn_step, self.btn_regs,
