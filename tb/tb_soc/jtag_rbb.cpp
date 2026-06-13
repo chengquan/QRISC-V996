@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cerrno>
 #include <unistd.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -54,7 +55,7 @@ extern "C" int jtag_rbb_init(int port) {
     addr.sin_family = AF_INET; addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons(port);
     if (bind(g_listen, (struct sockaddr*)&addr, sizeof(addr)) < 0) { perror("bind"); return -1; }
-    if (listen(g_listen, 1) < 0) { perror("listen"); return -1; }
+    if (listen(g_listen, 4) < 0) { perror("listen"); return -1; }   // backlog>1:重连可排队
     fcntl(g_listen, F_SETFL, O_NONBLOCK);
     fprintf(stderr, "[jtag_rbb] 监听 0.0.0.0:%d，等 OpenOCD(remote_bitbang)连接...\n", port);
     return 0;
@@ -82,13 +83,25 @@ extern "C" int jtag_rbb_tick(char tdo,
             } else if (ch=='r'||ch=='s'||ch=='t'||ch=='u') {
                 // (t)rst/(s)rst 组合:本桥不接系统复位,忽略电平,仅当作 nop
             } else if (ch == 'Q') {
-                g_quit = 1;
+                // OpenOCD shutdown:断开本连接但【仿真继续】,允许下一个 OpenOCD 重连。
+                // (旧实现这里 g_quit=1 让 sim $finish,导致重连必须重启仿真)
+                close(g_client); g_client = -1;
+                g_tck = 0; g_tms = 1; g_tdi = 0;    // 释放 JTAG 引脚,让 TAP 复位
+                fprintf(stderr, "[jtag_rbb] OpenOCD 退出(Q),仿真继续,等待重连...\n");
             }
             // 'B'/'b'(LED)忽略
         } else if (n == 0) {
-            // 对端关闭
+            // 对端正常关闭(FIN):释放连接,可重连
             close(g_client); g_client = -1;
-            fprintf(stderr, "[jtag_rbb] OpenOCD 断开\n");
+            g_tck = 0; g_tms = 1; g_tdi = 0;
+            fprintf(stderr, "[jtag_rbb] OpenOCD 断开,等待重连...\n");
+        } else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+            // 对端异常断开(RST,如 kill -9 / GUI terminate):同样释放,可重连。
+            // 【关键修复】旧实现不处理 n<0,g_client 永远占着 -> 第二个 OpenOCD 连不上
+            //   报 "Bad file descriptor"。
+            close(g_client); g_client = -1;
+            g_tck = 0; g_tms = 1; g_tdi = 0;
+            fprintf(stderr, "[jtag_rbb] OpenOCD 连接异常(errno=%d),释放,等待重连...\n", errno);
         }
     }
     *tck = g_tck; *tms = g_tms; *tdi = g_tdi;
