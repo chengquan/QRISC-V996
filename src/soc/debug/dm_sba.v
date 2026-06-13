@@ -97,9 +97,9 @@ reg        dcsr_ebreakm_q;    // dcsr.ebreakm:ebreak 进调试
 reg [31:0] dpc_q;             // 调试 PC(halt 处 / ebreak 处 / 调试器改写)
 reg        bp_q;              // 本次 halt 由 ebreak 断点引起
 reg        dpc_written_q;     // 调试器改写过 dpc(resume 需重定向)
-reg        redirect_q;
+reg [3:0]  redirect_q;        // 重定向保持计数(>0 时 dbg_redirect=1),等取指接受 branch
 assign dbg_ebreakm_o    = dcsr_ebreakm_q;
-assign dbg_redirect_o   = redirect_q;
+assign dbg_redirect_o   = (redirect_q != 4'd0);
 assign dbg_redirect_pc_o= dpc_q;
 assign dbg_reg_idx_o   = abs_regno_q[4:0];        // GPR 号(halt 时核读此寄存器)
 assign dbg_reg_we_o    = reg_we_q;
@@ -169,7 +169,7 @@ if (rst_i) begin
     data0_q<=32'b0; abs_regno_q<=16'b0; abs_write_q<=1'b0; abs_go_q<=2'b0;
     abs_cmderr_q<=3'b0; reg_we_q<=1'b0;
     dcsr_step_q<=1'b0; stepping_q<=1'b0;
-    dcsr_ebreakm_q<=1'b0; dpc_q<=32'b0; bp_q<=1'b0; dpc_written_q<=1'b0; redirect_q<=1'b0;
+    dcsr_ebreakm_q<=1'b0; dpc_q<=32'b0; bp_q<=1'b0; dpc_written_q<=1'b0; redirect_q<=4'd0;
     sbreadonaddr_q<=1'b0; sbautoincrement_q<=1'b0; sbreadondata_q<=1'b0;
     sbaccess_q<=3'd2; sberror_q<=3'd0; sbbusy_q<=1'b0; sbbusyerror_q<=1'b0;
     sbaddr_q<=32'b0; sbdata_q<=32'b0;
@@ -179,7 +179,7 @@ end else begin
     bus_req_q <= 1'b0;          // 默认拉低,仅发起那拍为 1
 
     reg_we_q <= 1'b0;           // 写 GPR 使能仅脉冲一拍
-    redirect_q <= 1'b0;         // 重定向仅脉冲一拍
+    if (redirect_q != 4'd0) redirect_q <= redirect_q - 4'd1;   // 重定向保持递减
 
     // ---- 断点:核执行 ebreak(ebreakm 开启)-> 进 halt,dpc = ebreak 的 PC ----
     if (dbg_ebreak_i && !halt_req_q && !halted_q) begin
@@ -248,7 +248,7 @@ end else begin
                     halt_req_q <= 1'b0; halted_q <= 1'b0;
                     if (dcsr_step_q) stepping_q <= 1'b1;  // 单步:只放一条指令
                     // 断点命中过 或 调试器改写过 dpc -> 恢复时重定向取指到 dpc
-                    if (bp_q || dpc_written_q) redirect_q <= 1'b1;
+                    if (bp_q || dpc_written_q) redirect_q <= 4'd8;  // 保持 8 拍,确保取指接受跳转
                     bp_q <= 1'b0; dpc_written_q <= 1'b0;
                 end
             end
