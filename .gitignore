@@ -14,6 +14,7 @@ tb/tb_soc/build_vl_trace_*/
 
 # ---- 仿真镜像 hex(由 make_hex.py / mkdisk.sh 现场生成)----
 tb/tb_soc/*.hex
+!tb/tb_soc/disk.hex      # 例外:虚拟磁盘镜像入库,clone 即用(其余 *.hex 仍忽略)
 sdk/baremetal/build/
 sdk/linux/build/
 
