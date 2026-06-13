@@ -46,6 +46,13 @@ if [ "$MODE" != "baremetal" ] && [ "$USE_DISK" = "1" ] && [ -f "$SOC/disk.hex" ]
     echo "== 虚拟磁盘:挂载 disk.hex(程序将出现在 /opt)=="
 fi
 
+# JTAG 调试:GUI 勾「JTAG调试」时传 JTAG=端口,仿真带 +JTAG 开 remote_bitbang
+JTAGARG=""
+if [ -n "$JTAG" ]; then
+    JTAGARG="+JTAG=$JTAG"
+    echo "== JTAG 调试:remote_bitbang 监听 :$JTAG(OpenOCD 控制台可连接)=="
+fi
+
 if [ -n "$TRACE" ]; then
     TD="${TRACE_DEPTH:-1}"
     TBIN="$SOC/build_vl_trace_d$TD/tb_soc"
@@ -53,9 +60,9 @@ if [ -n "$TRACE" ]; then
     rm -f "$SOC/tb_soc.fst"
     MAXC="${TRACE_CYCLES:-1000000}"
     echo "== 录波形模式:深度 $TD,跑 $MAXC 周期 -> tb_soc.fst(结束后点「查看波形」)=="
-    exec stdbuf -o0 "$TBIN" +IMAGE="$HEX" +INPUT="$INPUT" $DISKARG \
+    exec stdbuf -o0 "$TBIN" +IMAGE="$HEX" +INPUT="$INPUT" $DISKARG $JTAGARG \
          +TRACE +VCD="$SOC/tb_soc.fst" +MAX_CYCLES="$MAXC"
 else
     [ -x "$SOC/build_vl/tb_soc" ] || ./build.sh
-    exec stdbuf -o0 ./build_vl/tb_soc +IMAGE="$HEX" +INPUT="$INPUT" $DISKARG
+    exec stdbuf -o0 ./build_vl/tb_soc +IMAGE="$HEX" +INPUT="$INPUT" $DISKARG $JTAGARG
 fi

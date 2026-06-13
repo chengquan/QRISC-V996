@@ -42,12 +42,17 @@ wire spi_clk, spi_mosi, spi_cs;
 wire [31:0] gpio_out, gpio_oe;
 wire intr;
 
+//----------------- JTAG(remote_bitbang 桥驱动)-----------------
+reg  jtag_tck = 1'b0, jtag_tms = 1'b1, jtag_tdi = 1'b0;
+wire jtag_tdo;
+
 //----------------- DUT -----------------
 biriscv_soc u_dut
 (
      .clk_i(clk)
     ,.rst_i(rst)
     ,.reset_vector_i(reset_vector)
+    ,.jtag_tck_i(jtag_tck) ,.jtag_tms_i(jtag_tms) ,.jtag_tdi_i(jtag_tdi) ,.jtag_tdo_o(jtag_tdo)
 
     ,.mem_awready_i(m_awready) ,.mem_wready_i(m_wready)
     ,.mem_bvalid_i(m_bvalid) ,.mem_bresp_i(m_bresp) ,.mem_bid_i(m_bid)
@@ -226,6 +231,34 @@ always @(posedge clk) if (!rst && probe_en) begin
                 u_dut.u_soc.u_uart.rx_ready_q, u_dut.u_soc.u_uart.intr_q);
 end
 
+//----------------- JTAG remote_bitbang DPI 桥 -----------------
+import "DPI-C" context function int jtag_rbb_init(input int port);
+import "DPI-C" context function int jtag_rbb_tick(input byte tdo,
+            output byte tck, output byte tms, output byte tdi);
+integer jtag_port; reg jtag_en = 1'b0; reg jtag_want = 1'b0; reg jtag_inited = 1'b0;
+byte    rbb_tck, rbb_tms, rbb_tdi;
+initial begin
+    // 只在 initial 里解析 plusarg(不在 initial 里调 DPI —— --timing 下会出问题)
+    if (!$test$plusargs("JTAGTEST") && $value$plusargs("JTAG=%d", jtag_port))
+        jtag_want = 1'b1;
+end
+// DPI 调用放到 always(时钟)域:首拍初始化 socket,之后每拍 tick
+integer jtag_rc;
+// DPI 调用放到时钟域(避免 --timing 下在 initial 块里调 DPI):
+//   首拍初始化 remote_bitbang socket,之后每拍 tick 一次。
+always @(posedge clk) if (jtag_want) begin
+    if (!jtag_inited) begin
+        jtag_inited <= 1'b1;
+        jtag_rc = jtag_rbb_init(jtag_port);
+        if (jtag_rc == 0) jtag_en <= 1'b1;
+        $display("[tb_soc] JTAG 调试:OpenOCD 用 remote_bitbang 连 localhost:%0d", jtag_port);
+    end else if (jtag_en) begin
+        if (jtag_rbb_tick(jtag_tdo ? 8'd1 : 8'd0, rbb_tck, rbb_tms, rbb_tdi) == 0)
+            $finish;
+        jtag_tck <= rbb_tck[0]; jtag_tms <= rbb_tms[0]; jtag_tdi <= rbb_tdi[0];
+    end
+end
+
 //----------------- 跑控制 / 波形 / 心跳 -----------------
 integer    max_cycles, progress;
 reg [1023:0] vcd_path;
@@ -266,5 +299,8 @@ always @(posedge clk) begin
         end
     end
 end
+
+// 不依赖 OpenOCD 的 JTAG/SBA 自测(+JTAGTEST 开启)
+`include "jtag_selftest.vh"
 
 endmodule

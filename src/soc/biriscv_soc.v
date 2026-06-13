@@ -61,6 +61,12 @@ module biriscv_soc
     ,output [ 31:0]  gpio_output_o
     ,output [ 31:0]  gpio_output_enable_o
 
+    // OpenOCD 兼容的 JTAG 调试口(SBA:读写内存/外设,不暂停 CPU)
+    ,input           jtag_tck_i
+    ,input           jtag_tms_i
+    ,input           jtag_tdi_i
+    ,output          jtag_tdo_o
+
     ,output          intr_o         // 调试用:观察汇聚后的中断
 );
 
@@ -146,21 +152,50 @@ u_core
 //-----------------------------------------------------------------
 // riscv_soc 的 soc:arb + tap + 全外设
 //-----------------------------------------------------------------
+// JTAG 调试子系统(OpenOCD 兼容,SBA)—— 主口接到 soc 的 inport
+//-----------------------------------------------------------------
+wire        dbg_awvalid, dbg_wvalid, dbg_bready, dbg_arvalid, dbg_rready, dbg_wlast;
+wire [31:0] dbg_awaddr,  dbg_wdata,  dbg_araddr;
+wire [3:0]  dbg_awid,    dbg_wstrb,  dbg_arid;
+wire [7:0]  dbg_awlen,   dbg_arlen;
+wire [1:0]  dbg_awburst, dbg_arburst;
+wire        dbg_awready, dbg_wready, dbg_bvalid, dbg_arready, dbg_rvalid, dbg_rlast;
+wire [31:0] dbg_rdata;
+wire [1:0]  dbg_bresp,   dbg_rresp;
+
+riscv_debug u_debug
+(
+     .clk_i(clk_i), .rst_i(rst_i)
+    ,.jtag_tck_i(jtag_tck_i), .jtag_tms_i(jtag_tms_i)
+    ,.jtag_tdi_i(jtag_tdi_i), .jtag_tdo_o(jtag_tdo_o)
+    ,.ndmreset_o()
+    ,.awvalid_o(dbg_awvalid), .awaddr_o(dbg_awaddr), .awid_o(dbg_awid)
+    ,.awlen_o(dbg_awlen), .awburst_o(dbg_awburst), .awready_i(dbg_awready)
+    ,.wvalid_o(dbg_wvalid), .wdata_o(dbg_wdata), .wstrb_o(dbg_wstrb)
+    ,.wlast_o(dbg_wlast), .wready_i(dbg_wready)
+    ,.bvalid_i(dbg_bvalid), .bresp_i(dbg_bresp), .bready_o(dbg_bready)
+    ,.arvalid_o(dbg_arvalid), .araddr_o(dbg_araddr), .arid_o(dbg_arid)
+    ,.arlen_o(dbg_arlen), .arburst_o(dbg_arburst), .arready_i(dbg_arready)
+    ,.rvalid_i(dbg_rvalid), .rdata_i(dbg_rdata), .rresp_i(dbg_rresp)
+    ,.rlast_i(dbg_rlast), .rready_o(dbg_rready)
+);
+
+//-----------------------------------------------------------------
 soc u_soc
 (
      .clk_i(clk_i)
     ,.rst_i(rst_i)
 
-    // 额外的 inport AXI 从口(外部主/调试)—— 不用,绑死
-    ,.inport_awvalid_i(1'b0) ,.inport_awaddr_i(32'b0) ,.inport_awid_i(4'b0)
-    ,.inport_awlen_i(8'b0) ,.inport_awburst_i(2'b0)
-    ,.inport_wvalid_i(1'b0) ,.inport_wdata_i(32'b0) ,.inport_wstrb_i(4'b0) ,.inport_wlast_i(1'b0)
-    ,.inport_bready_i(1'b1)
-    ,.inport_arvalid_i(1'b0) ,.inport_araddr_i(32'b0) ,.inport_arid_i(4'b0)
-    ,.inport_arlen_i(8'b0) ,.inport_arburst_i(2'b0) ,.inport_rready_i(1'b1)
-    ,.inport_awready_o() ,.inport_wready_o() ,.inport_bvalid_o() ,.inport_bresp_o()
-    ,.inport_bid_o() ,.inport_arready_o() ,.inport_rvalid_o() ,.inport_rdata_o()
-    ,.inport_rresp_o() ,.inport_rid_o() ,.inport_rlast_o()
+    // inport AXI 从口 —— 接 JTAG 调试子系统的 SBA 主口(OpenOCD 读写内存/外设)
+    ,.inport_awvalid_i(dbg_awvalid) ,.inport_awaddr_i(dbg_awaddr) ,.inport_awid_i(dbg_awid)
+    ,.inport_awlen_i(dbg_awlen) ,.inport_awburst_i(dbg_awburst)
+    ,.inport_wvalid_i(dbg_wvalid) ,.inport_wdata_i(dbg_wdata) ,.inport_wstrb_i(dbg_wstrb) ,.inport_wlast_i(dbg_wlast)
+    ,.inport_bready_i(dbg_bready)
+    ,.inport_arvalid_i(dbg_arvalid) ,.inport_araddr_i(dbg_araddr) ,.inport_arid_i(dbg_arid)
+    ,.inport_arlen_i(dbg_arlen) ,.inport_arburst_i(dbg_arburst) ,.inport_rready_i(dbg_rready)
+    ,.inport_awready_o(dbg_awready) ,.inport_wready_o(dbg_wready) ,.inport_bvalid_o(dbg_bvalid) ,.inport_bresp_o(dbg_bresp)
+    ,.inport_bid_o() ,.inport_arready_o(dbg_arready) ,.inport_rvalid_o(dbg_rvalid) ,.inport_rdata_o(dbg_rdata)
+    ,.inport_rresp_o(dbg_rresp) ,.inport_rid_o() ,.inport_rlast_o(dbg_rlast)
 
     // 外部 DRAM 主口
     ,.mem_awready_i(mem_awready_i) ,.mem_wready_i(mem_wready_i)

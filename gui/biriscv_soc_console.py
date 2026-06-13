@@ -14,8 +14,10 @@ uart_lite 的 RX 引脚 -> SBI console_getchar -> hvc0 -> busybox sh;内核/shel
 """
 import os
 import re
+import time
 import codecs
 import queue
+import socket
 import threading
 import subprocess
 import tkinter as tk
@@ -29,6 +31,9 @@ BACKEND = os.path.join(HERE, "run_soc_backend.sh")
 ROOT = os.path.dirname(HERE)
 INPUT_FILE = os.path.join(ROOT, "tb", "tb_soc", ".gui_input.txt")
 VCD_FILE = os.path.join(ROOT, "tb", "tb_soc", "tb_soc.fst")
+OPENOCD_CFG = os.path.join(ROOT, "tools", "openocd", "qrisc-v996.cfg")
+JTAG_PORT = 9999          # 仿真 remote_bitbang 监听端口(与 .cfg 一致)
+OCD_TELNET = 4444         # OpenOCD telnet 命令端口
 
 # 波形深度(verilator --trace-depth):录的层次越深 VCD 越大越慢。切换会重编对应深度的二进制(缓存)。
 DEPTHS = {"顶层": "1", "+SoC接口": "2", "全部(大)": "0"}
@@ -108,6 +113,12 @@ class Console(tk.Tk):
                                        bg=BG2, fg=FG, selectcolor=BG, activebackground=BG2,
                                        activeforeground=FG, relief="flat")
         self.chk_disk.pack(side="left", padx=(10, 0))
+        # JTAG 调试:勾上启动时仿真带 +JTAG,可用下方 OpenOCD 控制台连接
+        self.jtag_var = tk.BooleanVar(value=False)
+        self.chk_jtag = tk.Checkbutton(bar, text="JTAG调试", variable=self.jtag_var,
+                                       bg=BG2, fg=FG, selectcolor=BG, activebackground=BG2,
+                                       activeforeground=FG, relief="flat")
+        self.chk_jtag.pack(side="left", padx=(10, 0))
         # 录波形 + 查看波形
         self.trace_var = tk.BooleanVar(value=False)
         self.chk_trace = tk.Checkbutton(bar, text="录波形", variable=self.trace_var,
@@ -136,6 +147,36 @@ class Console(tk.Tk):
         self.out.pack(side="top", fill="both", expand=True)
         self.out.tag_config("sys", foreground=ACCENT)
         self.out.tag_config("err", foreground=ERRCOL)
+
+        # ---- OpenOCD 调试控制台(底部,默认折叠成一行;连接后展开输出窗)----
+        dbg = tk.Frame(self, bg=BG2); dbg.pack(side="bottom", fill="x")
+        dbgbar = tk.Frame(dbg, bg=BG2); dbgbar.pack(side="top", fill="x")
+        self.btn_ocd = tk.Button(dbgbar, text="🔌 连接 OpenOCD", command=self.ocd_toggle,
+                                 bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
+        self.btn_ocd.pack(side="left", padx=(8, 4), pady=4)
+        tk.Label(dbgbar, text="OpenOCD>", bg=BG2, fg="#999").pack(side="left", padx=(6, 2))
+        self.ocd_entry = tk.Entry(dbgbar, bg="#3c3c3c", fg=FG, insertbackground=FG,
+                                  relief="flat", font=("Monospace", 10), state="disabled")
+        self.ocd_entry.pack(side="left", fill="x", expand=True, pady=4)
+        self.ocd_entry.bind("<Return>", lambda e: self.ocd_send())
+        # 快捷:地址读写
+        tk.Label(dbgbar, text="地址", bg=BG2, fg="#999").pack(side="left", padx=(8, 2))
+        self.ocd_addr = tk.Entry(dbgbar, width=12, bg="#3c3c3c", fg=FG, insertbackground=FG, relief="flat")
+        self.ocd_addr.insert(0, "0x94000008"); self.ocd_addr.pack(side="left", pady=4)
+        self.btn_rd = tk.Button(dbgbar, text="读", command=self.ocd_read, state="disabled",
+                                bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
+        self.btn_rd.pack(side="left", padx=2, pady=4)
+        self.ocd_wval = tk.Entry(dbgbar, width=12, bg="#3c3c3c", fg=FG, insertbackground=FG, relief="flat")
+        self.ocd_wval.insert(0, "0xCAFE0000"); self.ocd_wval.pack(side="left", pady=4)
+        self.btn_wr = tk.Button(dbgbar, text="写", command=self.ocd_write, state="disabled",
+                                bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
+        self.btn_wr.pack(side="left", padx=2, pady=4)
+        self.ocd_out = scrolledtext.ScrolledText(dbg, bg="#15170f", fg="#cfe0b0", height=6,
+                                                 font=("Monospace", 9), wrap="char",
+                                                 relief="flat", padx=8, pady=4, state="disabled")
+        # ocd_out 默认不 pack(连接后才显示)
+        self.ocd_proc = None        # openocd 子进程
+        self.ocd_sock = None        # 到 openocd telnet 的 socket
 
         row = tk.Frame(self, bg=BG2); row.pack(side="bottom", fill="x")
         tk.Label(row, text="输入:", bg=BG2, fg="#999").pack(side="left", padx=(8, 4), pady=6)
@@ -184,6 +225,12 @@ class Console(tk.Tk):
             if self.disk_var.get():
                 env["USE_DISK"] = "1"
                 self._write("[虚拟磁盘] 挂载 disk.hex —— 程序会出现在 /opt(开机后 ls /opt 看；改程序跑 sdk/linux/mkdisk.sh,不用重建内核)\n", "sys")
+        if self.jtag_var.get():
+            env["JTAG"] = str(JTAG_PORT)
+            self.jtag_running = True
+            self._write(f"[JTAG] 调试模式:仿真带 +JTAG={JTAG_PORT}。到下方 OpenOCD 控制台点「🔌连接」即可 mdw/mww 读写内存/外设(不暂停 CPU)\n", "sys")
+        else:
+            self.jtag_running = False
         if self.trace_var.get():
             cyc = (self.cyc_entry.get().strip() or "1000000")
             depth = DEPTHS[self.depth_var.get()]
@@ -315,6 +362,123 @@ class Console(tk.Tk):
         self.out.configure(state="normal"); self.out.delete("1.0", "end")
         self.out.configure(state="disabled")
 
+    # ---------------- OpenOCD 调试控制台 ----------------
+    def _ocd_write(self, text):
+        self.ocd_out.configure(state="normal")
+        self.ocd_out.insert("end", text)
+        self.ocd_out.see("end"); self.ocd_out.configure(state="disabled")
+
+    def ocd_toggle(self):
+        if self.ocd_sock:
+            self.ocd_disconnect()
+        else:
+            self.ocd_connect()
+
+    def ocd_connect(self):
+        if not getattr(self, "jtag_running", False) or not self.proc:
+            self._ocd_show()
+            self._ocd_write("✗ 请先勾选「JTAG调试」并点▶启动仿真,再连接 OpenOCD。\n")
+            return
+        if not os.path.exists(OPENOCD_CFG):
+            self._ocd_show(); self._ocd_write(f"✗ 找不到配置 {OPENOCD_CFG}\n"); return
+        self._ocd_show()
+        self._ocd_write("启动 openocd,连接仿真 JTAG…\n")
+        try:
+            self.ocd_proc = subprocess.Popen(
+                ["openocd", "-f", OPENOCD_CFG],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                cwd=ROOT, bufsize=1, universal_newlines=True)
+        except FileNotFoundError:
+            self._ocd_write("✗ 没装 openocd:sudo apt install -y openocd\n"); return
+        except Exception as e:
+            self._ocd_write(f"✗ openocd 启动失败:{e}\n"); return
+        threading.Thread(target=self._ocd_log_reader, daemon=True).start()
+        # 等 openocd 起 telnet,再连 4444
+        threading.Thread(target=self._ocd_open_telnet, daemon=True).start()
+
+    def _ocd_log_reader(self):
+        try:
+            for line in self.ocd_proc.stdout:
+                self.after(0, self._ocd_write, "  [ocd] " + line)
+        except Exception:
+            pass
+
+    def _ocd_open_telnet(self):
+        for _ in range(40):                      # 最多等 ~8s
+            try:
+                s = socket.create_connection(("localhost", OCD_TELNET), timeout=1)
+                self.ocd_sock = s
+                self.after(0, self._ocd_connected)
+                threading.Thread(target=self._ocd_recv, daemon=True).start()
+                return
+            except OSError:
+                time.sleep(0.2)
+        self.after(0, self._ocd_write, "✗ 连不上 openocd telnet(4444)。看上面 openocd 日志排错。\n")
+
+    def _ocd_connected(self):
+        self.btn_ocd.configure(text="⛔ 断开 OpenOCD")
+        for w in (self.ocd_entry, self.btn_rd, self.btn_wr):
+            w.configure(state="normal")
+        self._ocd_write("✅ 已连接。本核无调试模式,用 SBA(底层 DMI)读写,不走 mdw/mww:\n"
+                        "   右侧地址框 + 读/写 按钮,或敲:sba_read 0x80000000  /  sba_write 0x94000008 0xCAFE0000\n")
+
+    def _ocd_recv(self):
+        try:
+            while self.ocd_sock:
+                data = self.ocd_sock.recv(4096)
+                if not data:
+                    break
+                txt = data.decode("utf-8", "replace").replace("\r", "")
+                # 去掉 telnet 提示符控制字符
+                txt = txt.replace("\x00", "")
+                self.after(0, self._ocd_write, txt)
+        except OSError:
+            pass
+
+    def ocd_send(self, cmd=None):
+        if not self.ocd_sock:
+            return
+        if cmd is None:
+            cmd = self.ocd_entry.get().strip()
+            self.ocd_entry.delete(0, "end")
+        if not cmd:
+            return
+        self._ocd_write(f"> {cmd}\n")
+        try:
+            self.ocd_sock.sendall((cmd + "\n").encode())
+        except OSError as e:
+            self._ocd_write(f"✗ 发送失败:{e}\n")
+
+    def ocd_read(self):
+        # 用 sba_read(底层 DMI 驱动 SBA),不走需要 examine 核的 mdw
+        a = self.ocd_addr.get().strip()
+        if a: self.ocd_send(f"sba_read {a}")
+
+    def ocd_write(self):
+        a = self.ocd_addr.get().strip(); v = self.ocd_wval.get().strip()
+        if a and v: self.ocd_send(f"sba_write {a} {v}")
+
+    def ocd_disconnect(self):
+        try:
+            if self.ocd_sock:
+                try: self.ocd_sock.sendall(b"shutdown\n")
+                except OSError: pass
+                self.ocd_sock.close()
+        finally:
+            self.ocd_sock = None
+        if self.ocd_proc:
+            try: self.ocd_proc.terminate()
+            except Exception: pass
+            self.ocd_proc = None
+        self.btn_ocd.configure(text="🔌 连接 OpenOCD")
+        for w in (self.ocd_entry, self.btn_rd, self.btn_wr):
+            w.configure(state="disabled")
+        self._ocd_write("— 已断开 —\n")
+
+    def _ocd_show(self):
+        if not self.ocd_out.winfo_ismapped():
+            self.ocd_out.pack(side="top", fill="both", expand=False)
+
     def _set_running(self, on):
         self.btn_start.configure(state="disabled" if on else "normal")
         self.btn_stop.configure(state="normal" if on else "disabled")
@@ -323,11 +487,14 @@ class Console(tk.Tk):
         self.mode_menu.configure(state="disabled" if on else "normal")
         self.sel_menu.configure(state="disabled" if on else "normal")
         self.chk_disk.configure(state="disabled" if on else "normal")
+        self.chk_jtag.configure(state="disabled" if on else "normal")
         self.chk_trace.configure(state="disabled" if on else "normal")
         self.cyc_entry.configure(state="disabled" if on else "normal")
         self.depth_menu.configure(state="disabled" if on else "normal")
         self.status.configure(text="● 运行中" if on else "○ 已停止",
                               fg=ACCENT if on else "#999")
+        if not on and self.ocd_sock:        # 仿真停 -> 自动断开 OpenOCD
+            self.ocd_disconnect()
 
     def _on_close(self):
         try: self.stop()

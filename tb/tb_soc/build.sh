@@ -13,12 +13,13 @@ BACKEND="${1:-verilator}"
 
 # biriscv 核 RTL
 CORE="$SRC/top/riscv_top.v $(ls $SRC/core/*.v) $(ls $SRC/icache/*.v) $(ls $SRC/dcache/*.v)"
-# SoC 设计:riscv_soc 外设+互联 + biriscv_soc 集成顶层(都在 src/soc/)
-SOC="$(ls $SRC/soc/*.v)"
-# tb(只剩测试平台:顶层 + 行为级 DRAM)
+# SoC 设计:riscv_soc 外设+互联 + biriscv_soc 集成顶层 + JTAG 调试子系统(都在 src/soc/)
+SOC="$(ls $SRC/soc/*.v) $(ls $SRC/soc/debug/*.v)"
+# tb(测试平台:顶层 + 行为级 DRAM)+ JTAG remote_bitbang DPI 桥(C++)
 TB="$HERE/tb_soc.v $HERE/axi4_ram.v"
+CPP="$HERE/jtag_rbb.cpp"
 
-INCS="-I$SRC/soc -I$SRC/core -I$SRC/icache -I$SRC/dcache -I$SRC/top"
+INCS="-I$HERE -I$SRC/soc -I$SRC/soc/debug -I$SRC/core -I$SRC/icache -I$SRC/dcache -I$SRC/top"
 
 cd "$HERE"
 mkdir -p build
@@ -32,7 +33,7 @@ if [ "$BACKEND" = "verilator" ]; then
         --top-module tb_soc \
         $INCS \
         --Mdir build_vl -o tb_soc \
-        $TB $SOC $CORE
+        $TB $SOC $CORE $CPP
     echo "✅ 完成: build_vl/tb_soc   (用 ./run.sh 运行)"
 
 elif [ "$BACKEND" = "verilator-trace" ]; then
@@ -49,14 +50,15 @@ elif [ "$BACKEND" = "verilator-trace" ]; then
         --top-module tb_soc \
         $INCS \
         --Mdir "build_vl_trace_d$TD" -o tb_soc \
-        $TB $SOC $CORE
+        $TB $SOC $CORE $CPP
     echo "✅ 完成: build_vl_trace_d$TD/tb_soc   (录波形用,深度 $TD)"
 
 elif [ "$BACKEND" = "iverilog" ]; then
     command -v iverilog >/dev/null || { echo "缺 iverilog"; exit 1; }
     echo "== iverilog 编译 =="
+    # 注:iverilog 不支持 DPI/C++,JTAG 调试请用 verilator 后端
     iverilog -g2012 -Wall -Wno-timescale -o build/tb.vvp $INCS $TB $SOC $CORE
-    echo "✅ 完成: build/tb.vvp   (用 ./run.sh iverilog 运行)"
+    echo "✅ 完成: build/tb.vvp   (用 ./run.sh iverilog 运行;JTAG 需 verilator)"
 else
     echo "未知后端: $BACKEND"; exit 1
 fi

@@ -114,8 +114,41 @@ GUI（Linux 模式）勾「虚拟磁盘」启动 → `~ #` 后：
 ```
 改完程序只重跑 `./mkdisk.sh` + 重启仿真，**内核不动**。
 
-> 原理：程序 cpio 放 `0x82000000`（内核 RAM 之外，tb 36MB 内存背书）。开机 `/init`
-> 用 `vdiskcat`（mmap /dev/mem，read() 读不到 RAM 之外）解到 `/opt`。
+**`disk.hex` 是怎么生成的**（`mkdisk.sh` 内部这条链，全自动）：
+
+```
+sdk/linux/examples/*.c
+   │  ① riscv32-unknown-linux-gnu-gcc -static + strip        （编成静态 RV32 可执行）
+   ▼
+sdk/linux/build/disk/{hello,gpio_mmap,...}
+   │  ② mkcpio.py  打成 newc 格式 cpio                        （主机无 cpio，用 Python 自造）
+   ▼
+sdk/linux/build/disk.cpio   （上限 4MB，超了会报错）
+   │  ③ bin2hex.py  原始二进制 → $readmemh hex，落在 0x82000000
+   ▼
+tb/tb_soc/disk.hex
+```
+
+三个脚本都在 `sdk/linux/`：`mkdisk.sh`(总控) · `mkcpio.py`(打 cpio) · `bin2hex.py`(转 hex)。
+手动等价于：
+```bash
+cd sdk/linux
+riscv32-unknown-linux-gnu-gcc -march=rv32ima -mabi=ilp32 -O2 -static \
+    examples/hello.c -o build/disk/hello          # ① 编译(可再 strip 缩小)
+python3 mkcpio.py build/disk build/disk.cpio       # ② 目录 → newc cpio
+python3 bin2hex.py build/disk.cpio ../../tb/tb_soc/disk.hex 0x82000000   # ③ → hex@0x82000000
+```
+
+**然后整条链怎么用起来**：
+```
+disk.hex ──tb 加载(+DISK)──> DRAM 0x82000000  ──开机 /init: vdiskcat | cpio──> /opt/{程序}
+```
+- tb 用 `+DISK=disk.hex` 把它 `$readmemh` 进 DRAM 顶部（hex 自带 `@0x800000` 词偏移，与内核
+  `image.hex` 同一片内存不冲突）；GUI 勾「虚拟磁盘」即自动加 `+DISK`。
+- 开机 `/init` 用 `vdiskcat`（经 `/dev/mem` **mmap** 读 0x82000000，因为 read() 读不到
+  内核 RAM 之外）把 cpio 解到 `/opt`，并加进 PATH。
+- 放 0x82000000 是因为内核镜像本身已占满约 31MB，32MB 内腾不出空间，所以把仿真内存扩到
+  36MB、磁盘放在内核 RAM 之外那 4MB。
 
 ### 路 B：烤进 initramfs（随镜像分发，增量重建内核 ~1-2 分钟）
 ```bash

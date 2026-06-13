@@ -24,6 +24,9 @@ ARGS="+IMAGE=$HEX"
 [ -n "$INPUT_DELAY" ] && ARGS="$ARGS +INPUT_DELAY=$INPUT_DELAY"
 [ -n "$MAX_CYCLES" ]  && ARGS="$ARGS +MAX_CYCLES=$MAX_CYCLES"
 [ -n "$TRACE" ]       && ARGS="$ARGS +TRACE +VCD=$HERE/tb_soc.vcd"
+[ -n "$DISK" ]        && ARGS="$ARGS +DISK=$DISK"
+# JTAG=端口  开启 OpenOCD 兼容的 JTAG 调试(remote_bitbang),再起 openocd 连它
+[ -n "$JTAG" ]        && { ARGS="$ARGS +JTAG=$JTAG"; echo " JTAG 调试已开:OpenOCD 连 localhost:$JTAG(见 tools/openocd/)"; }
 
 echo "=================================================================="
 echo " biRISC-V + riscv_soc 全RTL外设 ($BACKEND):$ELF"
