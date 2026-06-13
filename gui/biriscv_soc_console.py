@@ -427,14 +427,20 @@ class Console(tk.Tk):
         threading.Thread(target=self._ocd_open_telnet, daemon=True).start()
 
     def _ocd_log_reader(self):
+        # 监测 OpenOCD 日志:examine 完成(出现 "Listening on port 4444" /
+        # gdb server / XLEN=)后才算"真正就绪",此前敲命令 OpenOCD 在忙 examine 不处理。
         try:
             for line in self.ocd_proc.stdout:
                 self.after(0, self._ocd_write, "  [ocd] " + line)
+                if (("Listening on port %d" % OCD_TELNET) in line
+                        or "Examined RISC-V core" in line
+                        or "starting gdb server" in line):
+                    self.after(0, self._ocd_ready)
         except Exception:
             pass
 
     def _ocd_open_telnet(self):
-        for _ in range(40):                      # 最多等 ~8s
+        for _ in range(60):                      # 最多等 ~12s(examine 慢)
             try:
                 s = socket.create_connection(("localhost", OCD_TELNET), timeout=1)
                 self.ocd_sock = s
@@ -446,14 +452,25 @@ class Console(tk.Tk):
         self.after(0, self._ocd_write, "✗ 连不上 openocd telnet(4444)。看上面 openocd 日志排错。\n")
 
     def _ocd_connected(self):
+        # telnet 的 TCP 连上了,但 OpenOCD 可能还在 examine(仿真里 bit-bang JTAG 慢)。
+        # 先只改按钮文案,输入框/按钮等 _ocd_ready(examine 完成)再启用,避免过早敲命令没反馈。
         self.btn_ocd.configure(text="⛔ 断开 OpenOCD")
+        self.ocd_ready = False
+        self._ocd_write("⏳ 已连上 OpenOCD,正在 examine 核(仿真里较慢,请等「✅就绪」再操作)…\n")
+        # 兜底:即使没在日志里匹配到就绪标志,25s 后也启用(避免卡住无法操作)
+        self.after(25000, self._ocd_ready)
+
+    def _ocd_ready(self):
+        if getattr(self, "ocd_ready", False) or not self.ocd_sock:
+            return                                # 只触发一次
+        self.ocd_ready = True
         for w in (self.ocd_entry, self.btn_rd, self.btn_wr,
                   self.btn_halt, self.btn_resume, self.btn_step, self.btn_regs,
                   self.btn_bp, self.btn_gdb):
             w.configure(state="normal")
-        self._ocd_write("✅ 已连接(OpenOCD examine 通过,核支持完整调试):\n"
+        self._ocd_write("✅ 就绪(examine 通过,XLEN=32,核支持完整调试):\n"
                         "   核调试:⏸暂停 / ▶继续 / ⤵单步 / 📋寄存器 / 设软件断点 / 🐞启动GDB\n"
-                        "   内存/外设:地址框 + 读/写(经 SBA,不暂停核),或敲 sba_read/sba_write、halt、reg pc 等\n")
+                        "   内存/外设:地址框 + 读/写(经 SBA,不暂停核),或敲 mdw/sba_read、halt、reg pc 等\n")
 
     def _ocd_recv(self):
         try:
@@ -483,7 +500,7 @@ class Console(tk.Tk):
             self._ocd_write(f"✗ 发送失败:{e}\n")
 
     def ocd_read(self):
-        # 用 sba_read(底层 DMI 驱动 SBA),不走需要 examine 核的 mdw
+        # 「读」按钮用 sba_read:经 SBA 读,不暂停核(mdw 会先 halt 核;手敲 mdw 也行)
         a = self.ocd_addr.get().strip()
         if a: self.ocd_send(f"sba_read {a}")
 
@@ -550,6 +567,7 @@ class Console(tk.Tk):
             try: self.ocd_proc.terminate()
             except Exception: pass
             self.ocd_proc = None
+        self.ocd_ready = False
         self.btn_ocd.configure(text="🔌 连接 OpenOCD")
         for w in (self.ocd_entry, self.btn_rd, self.btn_wr,
                   self.btn_halt, self.btn_resume, self.btn_step, self.btn_regs,
