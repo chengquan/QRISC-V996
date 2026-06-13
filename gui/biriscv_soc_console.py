@@ -153,7 +153,7 @@ class Console(tk.Tk):
         dbg = tk.Frame(self, bg=BG2); dbg.pack(side="bottom", fill="x")
         # 第 1 行:连接 + 命令输入 + 内存读写(SBA,不暂停核)
         dbgbar = tk.Frame(dbg, bg=BG2); dbgbar.pack(side="top", fill="x")
-        self.btn_ocd = tk.Button(dbgbar, text="🔌 连接 OpenOCD", command=self.ocd_toggle,
+        self.btn_ocd = tk.Button(dbgbar, text="连接 OpenOCD", command=self.ocd_toggle,
                                  bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
         self.btn_ocd.pack(side="left", padx=(8, 4), pady=4)
         tk.Label(dbgbar, text="OpenOCD>", bg=BG2, fg="#999").pack(side="left", padx=(6, 2))
@@ -177,16 +177,16 @@ class Console(tk.Tk):
         # 第 2 行:核调试(halt/单步/断点/寄存器/GDB)—— 连接后才启用
         dbgbar2 = tk.Frame(dbg, bg=BG2); dbgbar2.pack(side="top", fill="x")
         tk.Label(dbgbar2, text="核调试:", bg=BG2, fg="#999").pack(side="left", padx=(8, 2))
-        self.btn_halt = tk.Button(dbgbar2, text="⏸ 暂停", command=self.ocd_halt, state="disabled",
+        self.btn_halt = tk.Button(dbgbar2, text="暂停", command=self.ocd_halt, state="disabled",
                                   bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
         self.btn_halt.pack(side="left", padx=2, pady=4)
-        self.btn_resume = tk.Button(dbgbar2, text="▶ 继续", command=self.ocd_resume, state="disabled",
+        self.btn_resume = tk.Button(dbgbar2, text="继续", command=self.ocd_resume, state="disabled",
                                     bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
         self.btn_resume.pack(side="left", padx=2, pady=4)
-        self.btn_step = tk.Button(dbgbar2, text="⤵ 单步", command=self.ocd_step, state="disabled",
+        self.btn_step = tk.Button(dbgbar2, text="单步", command=self.ocd_step, state="disabled",
                                   bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
         self.btn_step.pack(side="left", padx=2, pady=4)
-        self.btn_regs = tk.Button(dbgbar2, text="📋 寄存器", command=self.ocd_regs, state="disabled",
+        self.btn_regs = tk.Button(dbgbar2, text="寄存器", command=self.ocd_regs, state="disabled",
                                   bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
         self.btn_regs.pack(side="left", padx=2, pady=4)
         # 软件断点:地址 + 设置
@@ -197,7 +197,7 @@ class Console(tk.Tk):
                                 bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
         self.btn_bp.pack(side="left", padx=2, pady=4)
         # 启动 GDB(开新终端连 :3333)
-        self.btn_gdb = tk.Button(dbgbar2, text="🐞 启动 GDB", command=self.ocd_launch_gdb, state="disabled",
+        self.btn_gdb = tk.Button(dbgbar2, text="启动 GDB", command=self.ocd_launch_gdb, state="disabled",
                                  bg="#3a3d41", fg="white", relief="flat", padx=8, pady=2)
         self.btn_gdb.pack(side="left", padx=(10, 2), pady=4)
 
@@ -258,7 +258,7 @@ class Console(tk.Tk):
         if self.jtag_var.get():
             env["JTAG"] = str(JTAG_PORT)
             self.jtag_running = True
-            self._write(f"[JTAG] 调试模式:仿真带 +JTAG={JTAG_PORT}。到下方 OpenOCD 控制台点「🔌连接」即可 mdw/mww 读写内存/外设(不暂停 CPU)\n", "sys")
+            self._write(f"[JTAG] 调试模式:仿真带 +JTAG={JTAG_PORT}。到下方 OpenOCD 控制台点「连接 OpenOCD」即可 halt/单步/断点/寄存器 + mdw 读写内存\n", "sys")
         else:
             self.jtag_running = False
         if self.trace_var.get():
@@ -461,9 +461,9 @@ class Console(tk.Tk):
     def _ocd_connected(self):
         # telnet 的 TCP 连上了,但 OpenOCD 可能还在 examine(仿真里 bit-bang JTAG 慢)。
         # 先只改按钮文案,输入框/按钮等 examine 完成再启用,避免过早敲命令没反馈。
-        self.btn_ocd.configure(text="⛔ 断开 OpenOCD")
+        self.btn_ocd.configure(text="断开 OpenOCD")
         self.ocd_ready = False
-        self._ocd_write("⏳ 已连上 OpenOCD,正在 examine 核(仿真里较慢,请等「✅就绪」再操作)…\n")
+        self._ocd_write("... 已连上 OpenOCD,正在 examine 核,请等「[就绪]」再操作 ...\n")
         # 兜底:即使没在日志里匹配到就绪标志,25s 后也启用(避免卡住无法操作)
         self.after(25000, self._ocd_ready)
         # ★竞态修复:examine 极快时,_ocd_log_reader 可能在 telnet socket 连上【之前】就
@@ -483,8 +483,8 @@ class Console(tk.Tk):
                   self.btn_halt, self.btn_resume, self.btn_step, self.btn_regs,
                   self.btn_bp, self.btn_gdb):
             w.configure(state="normal")
-        self._ocd_write("✅ 就绪(examine 通过,XLEN=32,核支持完整调试):\n"
-                        "   核调试:⏸暂停 / ▶继续 / ⤵单步 / 📋寄存器 / 设软件断点 / 🐞启动GDB\n"
+        self._ocd_write("[就绪] examine 通过,XLEN=32,核支持完整调试:\n"
+                        "   核调试:暂停 / 继续 / 单步 / 寄存器 / 设软件断点 / 启动GDB\n"
                         "   内存/外设:地址框 + 读/写(经 SBA,不暂停核),或敲 mdw/sba_read、halt、reg pc 等\n")
 
     def _ocd_recv(self):
@@ -576,7 +576,7 @@ class Console(tk.Tk):
             if shutil.which(term):
                 try:
                     subprocess.Popen([term] + args + [f"{gdb_cmds}; exec bash"], cwd=ROOT)
-                    self._ocd_write(f"🐞 已在新终端启动 {gdb},连 :3333。\n"
+                    self._ocd_write(f"[GDB] 已在新终端启动 {gdb},连 :3333。\n"
                                     "   试:info reg pc sp a0  /  x/2xw 0x80000000  /  monitor step\n")
                     return
                 except Exception as e:
@@ -598,7 +598,7 @@ class Console(tk.Tk):
             except Exception: pass
             self.ocd_proc = None
         self.ocd_ready = False
-        self.btn_ocd.configure(text="🔌 连接 OpenOCD")
+        self.btn_ocd.configure(text="连接 OpenOCD")
         for w in (self.ocd_entry, self.btn_rd, self.btn_wr,
                   self.btn_halt, self.btn_resume, self.btn_step, self.btn_regs,
                   self.btn_bp, self.btn_gdb):
