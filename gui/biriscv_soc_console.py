@@ -443,6 +443,10 @@ class Console(tk.Tk):
         for _ in range(60):                      # 最多等 ~12s(examine 慢)
             try:
                 s = socket.create_connection(("localhost", OCD_TELNET), timeout=1)
+                # ★关键:create_connection 的 timeout 会留在 socket 上,导致 _ocd_recv 的
+                #   recv() 在 1 秒无数据时抛 socket.timeout、接收线程静默死掉 ->
+                #   之后命令结果到了也没人收 -> GUI"敲命令无反应"。连上后改回永久阻塞。
+                s.settimeout(None)
                 self.ocd_sock = s
                 self.after(0, self._ocd_connected)
                 threading.Thread(target=self._ocd_recv, daemon=True).start()
@@ -473,17 +477,32 @@ class Console(tk.Tk):
                         "   内存/外设:地址框 + 读/写(经 SBA,不暂停核),或敲 mdw/sba_read、halt、reg pc 等\n")
 
     def _ocd_recv(self):
-        try:
-            while self.ocd_sock:
+        while self.ocd_sock:
+            try:
                 data = self.ocd_sock.recv(4096)
-                if not data:
-                    break
-                txt = data.decode("utf-8", "replace").replace("\r", "")
-                # 去掉 telnet 提示符控制字符
-                txt = txt.replace("\x00", "")
+            except socket.timeout:
+                continue                 # 万一仍有 timeout,别让线程死,接着收
+            except OSError:
+                break                    # 真连接错误(关闭/RST)才退出
+            if not data:
+                break
+            data = self._strip_telnet_iac(data)   # 剥掉 telnet IAC 协商序列(否则显示成方块)
+            txt = data.decode("utf-8", "replace").replace("\r", "").replace("\x00", "")
+            if txt:
                 self.after(0, self._ocd_write, txt)
-        except OSError:
-            pass
+
+    @staticmethod
+    def _strip_telnet_iac(data):
+        # telnet IAC(0xFF):0xFF + 命令字节;WILL/WONT/DO/DONT(0xFB-0xFE)再带 1 个选项字节。
+        out = bytearray(); i = 0; n = len(data)
+        while i < n:
+            b = data[i]
+            if b == 0xFF and i + 1 < n:
+                cmd = data[i+1]
+                i += 3 if 0xFB <= cmd <= 0xFE else 2   # WILL/WONT/DO/DONT 吃 3 字节,其余 2
+            else:
+                out.append(b); i += 1
+        return bytes(out)
 
     def ocd_send(self, cmd=None):
         if not self.ocd_sock:
