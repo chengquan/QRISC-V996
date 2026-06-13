@@ -99,7 +99,7 @@ reg        bp_q;              // 本次 halt 由 ebreak 断点引起
 reg        dpc_written_q;     // 调试器改写过 dpc(resume 需重定向)
 reg [3:0]  redirect_q;        // 恢复后倒计时:到 ==2 时脉冲一拍 dbg_redirect(此时取指/issue已恢复)
 assign dbg_ebreakm_o    = dcsr_ebreakm_q;
-assign dbg_redirect_o   = (redirect_q == 4'd2);
+assign dbg_redirect_o   = (redirect_q == 4'd5) || (redirect_q == 4'd4);  // halt 未撤时注入 2 拍
 assign dbg_redirect_pc_o= dpc_q;
 assign dbg_reg_idx_o   = abs_regno_q[4:0];        // GPR 号(halt 时核读此寄存器)
 assign dbg_reg_we_o    = reg_we_q;
@@ -179,7 +179,11 @@ end else begin
     bus_req_q <= 1'b0;          // 默认拉低,仅发起那拍为 1
 
     reg_we_q <= 1'b0;           // 写 GPR 使能仅脉冲一拍
-    if (redirect_q != 4'd0) redirect_q <= redirect_q - 4'd1;   // 重定向保持递减
+    // 重定向序列:6->5,4(注入,halt 仍在)->...->1(撤 halt,核从 dpc 续跑)->0
+    if (redirect_q != 4'd0) begin
+        redirect_q <= redirect_q - 4'd1;
+        if (redirect_q == 4'd1) begin halt_req_q <= 1'b0; halted_q <= 1'b0; end
+    end
 
     // ---- 断点:核执行 ebreak(ebreakm 开启)-> 进 halt,dpc = ebreak 的 PC ----
     if (dbg_ebreak_i && !halt_req_q && !halted_q) begin
@@ -245,11 +249,13 @@ end else begin
                     halt_req_q <= 1'b1; drain_q <= 5'd0;
                 end
                 if (dmi_wdata_i[30]) begin           // resumereq:恢复运行
-                    halt_req_q <= 1'b0; halted_q <= 1'b0;
-                    if (dcsr_step_q) stepping_q <= 1'b1;  // 单步:只放一条指令
-                    // 断点命中过 或 调试器改写过 dpc -> 恢复时重定向取指到 dpc
-                    if (bp_q || dpc_written_q) redirect_q <= 4'd5;  // 倒计时:5->...->2(脉冲)->0
-                    bp_q <= 1'b0; dpc_written_q <= 1'b0;
+                    if (bp_q || dpc_written_q) begin
+                        // 需重定向:保持 halt,先注入 redirect(序列里第 1 拍才撤 halt)
+                        redirect_q <= 4'd6; bp_q <= 1'b0; dpc_written_q <= 1'b0;
+                    end else begin
+                        halt_req_q <= 1'b0; halted_q <= 1'b0;
+                        if (dcsr_step_q) stepping_q <= 1'b1;  // 单步:只放一条指令
+                    end
                 end
             end
             dmi_rdata_q <= {halt_req_q,30'b0, dmactive_q};
