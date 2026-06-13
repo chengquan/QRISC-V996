@@ -248,7 +248,8 @@ gdb-multiarch vmlinux
 (gdb) monitor step               # 单步(仿真里比 GDB 自带 stepi 快)
 ```
 > 已用 OpenOCD 0.12 + gdb-multiarch 15.1 实测端到端通过(连接/读写寄存器/读内存/单步)。
-> 仿真里 bit-bang JTAG 慢,GDB 自带 `stepi` 每步数秒,用 `monitor step` 更快;真 FPGA 上不慢。
+> examine(认核)很快(~0.1秒);只有 GDB 自带 `stepi` 在仿真里慢(每步多轮 JTAG 往返、数秒),
+> 用 `monitor step` 更快;真 FPGA 上 `stepi` 也不慢。
 
 ---
 

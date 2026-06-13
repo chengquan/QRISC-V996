@@ -23,28 +23,30 @@ python3 gui/biriscv_soc_console.py
 - **录波形**:勾上 + 选深度/周期 → 跑完用「📊 查看波形」开 gtkwave 看 FST(GPIO/SPI 引脚时序等)。
 
 ## OpenOCD / JTAG 调试面板(窗口底部)
-勾「JTAG调试」启动仿真后,点「🔌 连接 OpenOCD」即起 openocd 连仿真 JTAG(examine 通过、
+勾「JTAG调试」启动仿真后,点「连接 OpenOCD」即起 openocd 连仿真 JTAG(examine 通过、
 gdb server 起在 :3333)。连上后两行控件:
 
 - **第 1 行(内存/外设,不暂停核)**:命令输入框 + 内存地址框 + 读/写 —— 走 SBA(`sba_read`/`sba_write`),
   可读写整片内存映射(DRAM/uart/gpio/…)而不打断 CPU。
-- **第 2 行(核调试)**:`⏸暂停`(halt) · `▶继续`(resume) · `⤵单步`(PC +4) · `📋寄存器`(打印 x0..x31+pc) ·
-  `断点@<地址> 设断点`(写 ebreak 当软件断点) · `🐞启动GDB`(开新终端跑 `gdb-multiarch` 连 :3333)。
+- **第 2 行(核调试)**:`暂停`(halt) · `继续`(resume) · `单步`(PC +4) · `寄存器`(打印 x0..x31+pc) ·
+  `断点@<地址> 设断点`(写 ebreak 当软件断点) · `启动 GDB`(开新终端跑 `gdb-multiarch` 连 :3333)。
 
 这些按钮经 telnet:4444 调 [`tools/openocd/qrisc-v996.cfg`](../tools/openocd/qrisc-v996.cfg) 里封装的
 `dbg_*` TCL 过程,与命令行 / GDB 走完全相同的 DMI 路径。完整说明见
 [`tools/openocd/README.md`](../tools/openocd/README.md)。需装 `openocd`(0.12+);GDB 按钮还需
 `gdb-multiarch`。
 
-**点连接后:** 先等下方出现绿色「✅ 就绪」(examine 完成)再操作;此前控件是灰的。
-examine 在仿真里走 bit-bang JTAG,**要十几秒**,耐心等。
+> 按钮/文案用纯中文(不用 emoji)——WSLg 默认字体无 emoji 字形,会显示成方块「□」。
+
+**点连接后:** 先等下方出现「[就绪]」(examine 完成)再操作;此前控件是灰的。examine 很快
+(实测 ~0.1 秒即完成),正常几乎瞬间就「[就绪]」。
 
 **连不上 / 命令没反应** —— 几乎都是**残留的 openocd 占着仿真的 JTAG 连接槽**(同一仿真同一时刻
 只接一个 openocd)。日志会有 `Bad file descriptor`。解决:在终端
 ```bash
 pkill -9 openocd
 ```
-清掉残留再点「🔌连接」。(JTAG 桥已支持重连,但若仿真二进制是旧的,需 `cd tb/tb_soc && ./build.sh` 重编。)
+清掉残留再点「连接 OpenOCD」。(JTAG 桥已支持重连,但若仿真二进制是旧的,需 `cd tb/tb_soc && ./build.sh` 重编。)
 
 ## 实现要点
 - 后端 stdout = UART 真串行线反序列化的字节,经**增量 UTF-8 解码**(中文不被拆成乱码)

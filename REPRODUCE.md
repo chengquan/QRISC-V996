@@ -245,7 +245,7 @@ resume
 ```bash
 gdb-multiarch vmlinux                  # 或你的 .elf
 (gdb) set arch riscv:rv32
-(gdb) set remotetimeout 300            # 仿真 bit-bang JTAG 慢,超时调大
+(gdb) set remotetimeout 300            # 仿真里 GDB 的 stepi 单步要多轮 JTAG 往返、每步数秒,超时调大
 (gdb) target extended-remote :3333
 (gdb) info reg pc sp ra a0             # 读寄存器(已实测)
 (gdb) x/2xw 0x80000000                 # 读内存,首字 0x15c0006f(已实测)
