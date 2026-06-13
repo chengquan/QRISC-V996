@@ -237,6 +237,9 @@ step ; reg pc            # 单步,PC +4
 mdw 0x80000000           # 经 SBA 读内存 = 0x15c0006f
 resume
 ```
+桥支持 OpenOCD 反复连/断（一个退出后仿真继续，下一个直接再连）。
+> **连不上 / 命令没反应**：报 `Bad file descriptor` 是残留 openocd 占着连接槽 —— `pkill -9 openocd`
+> 再连。改 `jtag_rbb.cpp` 后需 `cd tb/tb_soc && ./build.sh` 重编(否则还是旧的一次性连接)。
 
 ### 7.3 GDB（实测 gdb-multiarch 端到端通过）
 ```bash

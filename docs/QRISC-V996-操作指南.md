@@ -233,6 +233,10 @@ openocd -f tools/openocd/qrisc-v996.cfg
 ```
 标准命令(telnet localhost 4444):`halt` / `reg pc` / `step`(PC +4) / `mdw 0x80000000` / `resume`。
 
+> 桥支持 OpenOCD 反复连/断,无需重启仿真。**连不上、报 `Bad file descriptor`、或命令(含 GUI 里)
+> 毫无反应**——几乎都是残留 openocd 占着仿真的唯一连接槽:`pkill -9 openocd` 再连即可。
+> (改过 `jtag_rbb.cpp` 要 `cd tb/tb_soc && ./build.sh` 重编。)
+
 ### 8.5.3 GDB
 ```bash
 gdb-multiarch vmlinux

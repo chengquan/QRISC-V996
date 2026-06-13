@@ -36,6 +36,16 @@ gdb server 起在 :3333)。连上后两行控件:
 [`tools/openocd/README.md`](../tools/openocd/README.md)。需装 `openocd`(0.12+);GDB 按钮还需
 `gdb-multiarch`。
 
+**点连接后:** 先等下方出现绿色「✅ 就绪」(examine 完成)再操作;此前控件是灰的。
+examine 在仿真里走 bit-bang JTAG,**要十几秒**,耐心等。
+
+**连不上 / 命令没反应** —— 几乎都是**残留的 openocd 占着仿真的 JTAG 连接槽**(同一仿真同一时刻
+只接一个 openocd)。日志会有 `Bad file descriptor`。解决:在终端
+```bash
+pkill -9 openocd
+```
+清掉残留再点「🔌连接」。(JTAG 桥已支持重连,但若仿真二进制是旧的,需 `cd tb/tb_soc && ./build.sh` 重编。)
+
 ## 实现要点
 - 后端 stdout = UART 真串行线反序列化的字节,经**增量 UTF-8 解码**(中文不被拆成乱码)
   + **去 `\r`**(行尾不留豆腐块)+ **ANSI 转义剥离**(`ls` 颜色码不花屏)后显示。

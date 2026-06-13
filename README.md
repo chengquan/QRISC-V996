@@ -90,6 +90,8 @@ gdb-multiarch vmlinux
 (gdb) set arch riscv:rv32
 (gdb) target extended-remote :3333            # 读写寄存器/内存、单步均可
 ```
+> 也可用 GUI:勾「JTAG调试」启动后,底部 OpenOCD 面板有 halt/单步/断点/寄存器/启动GDB 按钮。
+> 连不上或命令没反应?多半是残留 openocd 占着连接槽 —— `pkill -9 openocd` 再连(桥支持重连)。
 
 ## 从源码重建整个 OS(可选)
 

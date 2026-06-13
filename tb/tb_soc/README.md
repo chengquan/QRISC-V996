@@ -66,6 +66,10 @@ JTAG 调试模块([`src/soc/debug/`](../../src/soc/debug))。两种自测 + 真 
 # 3) 开 JTAG 端口供 OpenOCD/GDB 远程连(remote_bitbang)
 JTAG=9999 ./run.sh        # 再起 openocd -f tools/openocd/qrisc-v996.cfg
 ```
+桥支持 OpenOCD **反复连接/断开**(一个 OpenOCD 退出后仿真继续,下一个可直接再连)。
+> 连不上、报 `Bad file descriptor`?是残留 openocd 占着连接槽 —— `pkill -9 openocd` 再连。
+> (改 `jtag_rbb.cpp` 后记得 `./build.sh` 重编,否则还是旧的一次性连接行为。)
+
 完整 OpenOCD/GDB 流程见 [`tools/openocd/README.md`](../../tools/openocd/README.md)。
 
 ## ⚠️ 关键修复:biRISC-V 过 riscv_soc 互联的 AXI ID(否则 fetch stall)
