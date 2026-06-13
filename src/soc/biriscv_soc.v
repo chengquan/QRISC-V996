@@ -67,6 +67,15 @@ module biriscv_soc
     ,input           jtag_tdi_i
     ,output          jtag_tdo_o
 
+    // 测试 DMI 注入口(tb 快速自测用;正常运行 tdmi_en_i=0)
+    ,input           tdmi_en_i
+    ,input           tdmi_req_i
+    ,input  [  6:0]  tdmi_addr_i
+    ,input  [ 31:0]  tdmi_wdata_i
+    ,input  [  1:0]  tdmi_op_i
+    ,output [ 31:0]  tdmi_rdata_o
+    ,output [  1:0]  tdmi_resp_o
+
     ,output          intr_o         // 调试用:观察汇聚后的中断
 );
 
@@ -181,6 +190,10 @@ riscv_debug u_debug
     ,.dbg_halt_o(dbg_halt), .dbg_pc_i(dbg_pc)   // 暂停核 / 读核 PC
     ,.dbg_reg_idx_o(dbg_reg_idx), .dbg_reg_rdata_i(dbg_reg_rdata)
     ,.dbg_reg_we_o(dbg_reg_we), .dbg_reg_wdata_o(dbg_reg_wdata)
+    // 测试 DMI 注入口(引出到 tb 顶层做快速自测)
+    ,.tdmi_en_i(tdmi_en_i), .tdmi_req_i(tdmi_req_i), .tdmi_addr_i(tdmi_addr_i)
+    ,.tdmi_wdata_i(tdmi_wdata_i), .tdmi_op_i(tdmi_op_i)
+    ,.tdmi_rdata_o(tdmi_rdata_o), .tdmi_resp_o(tdmi_resp_o)
     ,.awvalid_o(dbg_awvalid), .awaddr_o(dbg_awaddr), .awid_o(dbg_awid)
     ,.awlen_o(dbg_awlen), .awburst_o(dbg_awburst), .awready_i(dbg_awready)
     ,.wvalid_o(dbg_wvalid), .wdata_o(dbg_wdata), .wstrb_o(dbg_wstrb)

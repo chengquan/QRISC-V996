@@ -36,6 +36,14 @@ module riscv_debug
     ,output [7:0]     arlen_o   ,output [1:0]  arburst_o ,input arready_i
     ,input            rvalid_i  ,input [31:0] rdata_i ,input [1:0] rresp_i
     ,input            rlast_i   ,output rready_o
+    // 测试用 DMI 注入(tb 快速自测:绕过慢 JTAG)。正常运行 tdmi_en_i=0。
+    ,input            tdmi_en_i
+    ,input            tdmi_req_i
+    ,input  [6:0]     tdmi_addr_i
+    ,input  [31:0]    tdmi_wdata_i
+    ,input  [1:0]     tdmi_op_i
+    ,output [31:0]    tdmi_rdata_o
+    ,output [1:0]     tdmi_resp_o
 );
 
 localparam ABITS = 7;
@@ -62,10 +70,21 @@ jtag_dtm #(.IDCODE_VALUE(IDCODE_VALUE), .ABITS(ABITS)) u_dtm (
     ,.dmi_op_o(dmi_op), .dmi_rdata_i(dmi_rdata), .dmi_resp_i(dmi_resp)
 );
 
+// DMI 来源 mux:测试模式(tdmi_en)用 tb 注入,否则用 JTAG DTM
+wire [31:0] dm_rdata; wire [1:0] dm_resp;
+wire             dm_req   = tdmi_en_i ? tdmi_req_i   : dmi_req;
+wire [ABITS-1:0] dm_addr  = tdmi_en_i ? tdmi_addr_i  : dmi_addr;
+wire [31:0]      dm_wdata = tdmi_en_i ? tdmi_wdata_i : dmi_wdata;
+wire [1:0]       dm_op    = tdmi_en_i ? tdmi_op_i    : dmi_op;
+assign dmi_rdata    = dm_rdata;   // 给 DTM 回读
+assign dmi_resp     = dm_resp;
+assign tdmi_rdata_o = dm_rdata;   // 给 tb 回读
+assign tdmi_resp_o  = dm_resp;
+
 dm_sba #(.ABITS(ABITS)) u_dm (
      .clk_i(clk_i), .rst_i(rst_i)
-    ,.dmi_req_i(dmi_req), .dmi_addr_i(dmi_addr), .dmi_wdata_i(dmi_wdata)
-    ,.dmi_op_i(dmi_op), .dmi_rdata_o(dmi_rdata), .dmi_resp_o(dmi_resp)
+    ,.dmi_req_i(dm_req), .dmi_addr_i(dm_addr), .dmi_wdata_i(dm_wdata)
+    ,.dmi_op_i(dm_op), .dmi_rdata_o(dm_rdata), .dmi_resp_o(dm_resp)
     ,.bus_req_o(bus_req), .bus_we_o(bus_we), .bus_addr_o(bus_addr)
     ,.bus_wdata_o(bus_wdata), .bus_size_o(bus_size)
     ,.bus_done_i(bus_done), .bus_rdata_i(bus_rdata), .bus_err_i(bus_err)

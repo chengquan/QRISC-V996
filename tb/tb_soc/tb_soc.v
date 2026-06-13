@@ -45,6 +45,13 @@ wire intr;
 //----------------- JTAG(remote_bitbang 桥驱动)-----------------
 reg  jtag_tck = 1'b0, jtag_tms = 1'b1, jtag_tdi = 1'b0;
 wire jtag_tdo;
+//----------------- 测试 DMI 注入(快速自测,绕过慢 JTAG)-----------------
+reg         tdmi_en = 1'b0, tdmi_req = 1'b0;
+reg  [6:0]  tdmi_addr = 7'b0;
+reg  [31:0] tdmi_wdata = 32'b0;
+reg  [1:0]  tdmi_op = 2'b0;
+wire [31:0] tdmi_rdata;
+wire [1:0]  tdmi_resp;
 
 //----------------- DUT -----------------
 biriscv_soc u_dut
@@ -53,6 +60,9 @@ biriscv_soc u_dut
     ,.rst_i(rst)
     ,.reset_vector_i(reset_vector)
     ,.jtag_tck_i(jtag_tck) ,.jtag_tms_i(jtag_tms) ,.jtag_tdi_i(jtag_tdi) ,.jtag_tdo_o(jtag_tdo)
+    ,.tdmi_en_i(tdmi_en) ,.tdmi_req_i(tdmi_req) ,.tdmi_addr_i(tdmi_addr)
+    ,.tdmi_wdata_i(tdmi_wdata) ,.tdmi_op_i(tdmi_op)
+    ,.tdmi_rdata_o(tdmi_rdata) ,.tdmi_resp_o(tdmi_resp)
 
     ,.mem_awready_i(m_awready) ,.mem_wready_i(m_wready)
     ,.mem_bvalid_i(m_bvalid) ,.mem_bresp_i(m_bresp) ,.mem_bid_i(m_bid)
@@ -302,5 +312,7 @@ end
 
 // 不依赖 OpenOCD 的 JTAG/SBA 自测(+JTAGTEST 开启)
 `include "jtag_selftest.vh"
+// 快速调试自测(+DBGTEST,直驱 DMI,几千周期)
+`include "dbg_fast_test.vh"
 
 endmodule
