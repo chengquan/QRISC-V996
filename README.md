@@ -1,9 +1,20 @@
 # QRISC-V996 —— 开箱即跑的 RV32 Linux SoC 仿真平台
 
+![Platform](https://img.shields.io/badge/platform-WSL%20%7C%20Linux-blue)
+![CPU](https://img.shields.io/badge/CPU-biRISC--V%20RV32IMA-orange)
+![Linux](https://img.shields.io/badge/Linux-5.4-yellow)
+![Simulator](https://img.shields.io/badge/sim-Verilator%20RTL-green)
+![License](https://img.shields.io/badge/license-Apache--2.0-lightgrey)
+
 **QRISC-V996** 是一个完整的 RISC-V SoC 平台:把一个从源码自编的 **RV32IMA Linux 5.4**
 跑在 **biRISC-V** 双发射核 + 一整套**真 RTL 外设**(UART / Timer / GPIO / SPI / 中断
 控制器)的周期级仿真上,配套 SBI 引导器、裸机/Linux 双线 SDK、虚拟磁盘、以及一个串口
 控制台 GUI。在 **WSL / Linux** 上跑。
+
+GUI 串口控制台启动 biRISC-V SoC,自源码编译的 Linux 5.4 在周期级 RTL 仿真上引导到 shell
+(虚拟磁盘已挂载,UART 走真 RTL `uart_lite @0x92000000`):
+
+![QRISC-V996 Console](docs/img/console.png)
 
 > 命名:**QRISC-V996** = 整个平台/发行;**biRISC-V** = 其采用的 CPU 核
 > (源自 [ultraembedded/biriscv](https://github.com/ultraembedded/biriscv),保留原名以示署名)。
@@ -37,7 +48,8 @@ QRISC-V996/
 ```bash
 # 1. 依赖
 sudo apt install -y verilator gtkwave python3-tk device-tree-compiler \
-                    gcc-riscv64-unknown-elf
+                    gcc-riscv64-unknown-elf \
+                    fonts-wqy-zenhei          # GUI 中文显示
 # 2. 构建仿真器(纯 RTL,Verilator)
 cd tb/tb_soc && ./build.sh && cd ../..
 # 3a. GUI(推荐,WSLg 自带图形)
@@ -48,6 +60,8 @@ python3 gui/biriscv_soc_console.py
 到 `~ #` 提示符后敲命令(`uname -a`、`ls`、`cat /proc/cpuinfo` …)。
 
 > ⏱️ 周期级 RTL 仿真较慢,启动到 shell 需要几十秒到几分钟(取决于控制台变体)。
+>
+> 🈶 GUI 中文若显示为豆腐块,即缺 CJK 字体:装上面的 `fonts-wqy-zenhei` 后**重启 GUI** 即可。
 
 ### 两个控制台变体(image/)
 | 镜像 | 控制台 | 说明 |
@@ -93,5 +107,3 @@ CSR 旧名/zicsr 补丁、配置),无需手改内核源码。完整背景见
 - SoC 外设/互联 RTL:[ultraembedded/riscv_soc](https://github.com/ultraembedded/riscv_soc)
 - SBI 引导器:[ultraembedded/riscv-linux-boot](https://github.com/ultraembedded/riscv-linux-boot)
 - Linux 5.4 · BusyBox 1.37.0 · RISC-V GNU 工具链(均自源码编译)
-# QRISC-V996
-# QRISC-V996
