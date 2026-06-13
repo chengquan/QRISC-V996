@@ -11,6 +11,9 @@
 [DBG] 单步后 dmstatus = 0x00000382
 [DBG] 单步后 dpc = 0x80000160
 [DBG]   单步(PC 前进):PASS
+[DBG] 断点后 dmstatus = 0x00000c82
+[DBG] 断点命中 dpc = 0x80200000
+[DBG]   软件断点:FAIL
 [DBG] resume
-[DBG] ===== 调试快速自测 全 PASS =====
-ERR=0
+[DBG] ===== 有 FAIL =====
+ERR=1

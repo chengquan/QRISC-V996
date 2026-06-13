@@ -124,6 +124,14 @@ initial begin : DBG_FAST_TEST
         repeat (120) @(posedge clk);          // 跑 nop -> ebreak -> 命中 halt
         t_dmi(T_DMSTATUS, 32'b0, 2'd1, dt_rd, dt_resp);
         prv("[DBG] 断点后 dmstatus = ", dt_rd);
+        // 诊断:若没自动 halt,手动 halt 读 PC 看核跑到哪了(判断重定向是否生效)
+        if (!dt_rd[9]) begin
+            // 没自动命中:手动 halt 读 PC,看核到底跑到哪(判断重定向是否生效)
+            t_dmi(T_DMCONTROL, 32'h8000_0001, 2'd2, dt_rd, dt_resp);  // 手动 halt
+            repeat (40) @(posedge clk);
+            t_abs_read(16'h07b1, dt_rd);
+            prv("[DBG] (诊断)未命中 -> 手动 halt 后核 PC = ", dt_rd);
+        end
         t_abs_read(16'h07b1, dt_rd);
         prv("[DBG] 断点命中 dpc = ", dt_rd);
         ok = (dt_rd === 32'h8020_0004);       // 应停在 ebreak 那条(0x80200004)
