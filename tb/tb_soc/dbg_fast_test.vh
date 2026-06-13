@@ -116,10 +116,22 @@ initial begin : DBG_FAST_TEST
         t_dmi(T_SBADDR0, 32'h8020_0000, 2'd2, dt_rd, dt_resp);
         t_dmi(T_SBDATA0, 32'h0000_0013, 2'd2, dt_rd, dt_resp);   // nop
         repeat (40) @(posedge clk);
+        // 诊断:SBA 读回确认 nop/ebreak 真落进 DRAM
+        t_dmi(T_SBCS,    32'h0014_0000, 2'd2, dt_rd, dt_resp);  // readonaddr
+        t_dmi(T_SBADDR0, 32'h8020_0000, 2'd2, dt_rd, dt_resp);
+        repeat (8) @(posedge clk);
+        t_dmi(T_SBDATA0, 32'b0, 2'd1, dt_rd, dt_resp);
+        prv("[DBG] (诊断)DRAM[0x80200000] = ", dt_rd);   // 期望 0x13(nop)
+        t_dmi(T_SBADDR0, 32'h8020_0004, 2'd2, dt_rd, dt_resp);
+        repeat (8) @(posedge clk);
+        t_dmi(T_SBDATA0, 32'b0, 2'd1, dt_rd, dt_resp);
+        prv("[DBG] (诊断)DRAM[0x80200004] = ", dt_rd);   // 期望 0x73(ebreak)
         // 设 dcsr.ebreakm=1(bit15),清 step
         t_abs_write(16'h07b0, 32'h0000_8000);
         // 把 dpc 设到 0x80200000,resume(带重定向)
         t_abs_write(16'h07b1, 32'h8020_0000);
+        t_abs_read(16'h07b1, dt_rd);
+        prv("[DBG] (诊断)resume 前 dpc 读回 = ", dt_rd);  // 期望 0x80200000
         t_dmi(T_DMCONTROL, 32'h4000_0001, 2'd2, dt_rd, dt_resp);
         repeat (120) @(posedge clk);          // 跑 nop -> ebreak -> 命中 halt
         t_dmi(T_DMSTATUS, 32'b0, 2'd1, dt_rd, dt_resp);
