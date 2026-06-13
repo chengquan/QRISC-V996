@@ -7,6 +7,10 @@
 [DBG]   读 dpc:PASS
 [DBG] 写 x10=0x1234ABCD,读回 = 0x1234abcd
 [DBG]   写/读 GPR x10:PASS
+[DBG] 单步前 dpc = 0x8000015c
+[DBG] 单步后 dmstatus = 0x00000382
+[DBG] 单步后 dpc = 0x80000160
+[DBG]   单步(PC 前进):PASS
 [DBG] resume
 [DBG] ===== 调试快速自测 全 PASS =====
 ERR=0

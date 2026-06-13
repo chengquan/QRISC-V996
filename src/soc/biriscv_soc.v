@@ -160,9 +160,16 @@ u_core
     ,.dbg_reg_idx_i(dbg_reg_idx) ,.dbg_reg_rdata_o(dbg_reg_rdata)
     ,.dbg_reg_we_i(dbg_reg_we) ,.dbg_reg_wdata_i(dbg_reg_wdata)
     ,.dbg_step_i(dbg_step) ,.dbg_issued_o(dbg_issued)
+    ,.dbg_ebreakm_i(dbg_ebreakm) ,.dbg_ebreak_o(dbg_ebreak) ,.dbg_ebreak_pc_o(dbg_ebreak_pc)
+    ,.dbg_redirect_i(dbg_redirect) ,.dbg_redirect_pc_i(dbg_redirect_pc)
 );
 wire        dbg_step;     // DM -> core:单步(强制单发射)
 wire        dbg_issued;   // core -> DM:发射一条指令脉冲
+wire        dbg_ebreakm;  // DM -> core:ebreak 进调试使能
+wire        dbg_ebreak;   // core -> DM:ebreak 命中脉冲
+wire [31:0] dbg_ebreak_pc;// core -> DM:ebreak 的 PC
+wire        dbg_redirect; // DM -> core:恢复时重定向取指
+wire [31:0] dbg_redirect_pc;
 wire        dbg_halt;     // Debug Module -> core:请求暂停
 wire [31:0] dbg_pc;       // core -> Debug Module:下一条待发射 PC(= dpc)
 wire [4:0]  dbg_reg_idx;  // DM -> core:要读写的 GPR 号
@@ -194,6 +201,8 @@ riscv_debug u_debug
     ,.dbg_reg_idx_o(dbg_reg_idx), .dbg_reg_rdata_i(dbg_reg_rdata)
     ,.dbg_reg_we_o(dbg_reg_we), .dbg_reg_wdata_o(dbg_reg_wdata)
     ,.dbg_step_o(dbg_step), .dbg_issued_i(dbg_issued)
+    ,.dbg_ebreakm_o(dbg_ebreakm), .dbg_ebreak_i(dbg_ebreak), .dbg_ebreak_pc_i(dbg_ebreak_pc)
+    ,.dbg_redirect_o(dbg_redirect), .dbg_redirect_pc_o(dbg_redirect_pc)
     // 测试 DMI 注入口(引出到 tb 顶层做快速自测)
     ,.tdmi_en_i(tdmi_en_i), .tdmi_req_i(tdmi_req_i), .tdmi_addr_i(tdmi_addr_i)
     ,.tdmi_wdata_i(tdmi_wdata_i), .tdmi_op_i(tdmi_op_i)

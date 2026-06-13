@@ -73,6 +73,10 @@ module biriscv_csr
     ,output          mmu_mxr_o
     ,output          mmu_flush_o
     ,output [ 31:0]  mmu_satp_o
+    // 调试断点:ebreakm 开启时 ebreak 进调试;命中时脉冲 + 给出 ebreak 的 PC
+    ,input           dbg_ebreakm_i
+    ,output          dbg_ebreak_o
+    ,output [ 31:0]  dbg_ebreak_pc_o
 );
 
 
@@ -227,8 +231,10 @@ begin
         exception_e1_q  <= `EXCEPTION_ILLEGAL_INSTRUCTION;
     else if ((opcode_opcode_i & `INST_ERET_MASK) == `INST_ERET)
         exception_e1_q  <= `EXCEPTION_ERET_U + {4'b0, eret_priv_w};
+    // ebreak:调试断点开启(dbg_ebreakm_i)时改成"进调试"(抑制陷入,由 DM halt),
+    //         否则照常当 BREAKPOINT 异常陷入 mtvec
     else if ((opcode_opcode_i & `INST_EBREAK_MASK) == `INST_EBREAK)
-        exception_e1_q  <= `EXCEPTION_BREAKPOINT;
+        exception_e1_q  <= dbg_ebreakm_i ? `EXCEPTION_W'b0 : `EXCEPTION_BREAKPOINT;
     else if (opcode_invalid_i || csr_fault_r)
         exception_e1_q  <= `EXCEPTION_ILLEGAL_INSTRUCTION;
     // Fence / MMU settings cause a pipeline flush
@@ -257,6 +263,10 @@ assign csr_result_e1_value_o     = rd_result_e1_q;
 assign csr_result_e1_write_o     = rd_valid_e1_q;
 assign csr_result_e1_wdata_o     = csr_wdata_e1_q;
 assign csr_result_e1_exception_o = exception_e1_q;
+
+// 调试断点命中:ebreak 指令提交 + ebreakm 开启 -> 脉冲(PC = 该 ebreak 指令地址)
+assign dbg_ebreak_o    = ebreak_w & dbg_ebreakm_i;
+assign dbg_ebreak_pc_o = opcode_pc_i;
 
 //-----------------------------------------------------------------
 // Interrupt launch enable

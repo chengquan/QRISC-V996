@@ -5,7 +5,8 @@
 // 结果同时打到屏幕和 dbg_result.txt(跨调用可读)。
 //-----------------------------------------------------------------
 localparam [6:0] T_DMCONTROL=7'h10, T_DMSTATUS=7'h11, T_DATA0=7'h04,
-                 T_ABSTRACTCS=7'h16, T_COMMAND=7'h17;
+                 T_ABSTRACTCS=7'h16, T_COMMAND=7'h17,
+                 T_SBCS=7'h38, T_SBADDR0=7'h39, T_SBDATA0=7'h3c;
 integer dt_f;
 
 // 一次 DMI 访问(直接驱动 tdmi_*)
@@ -106,10 +107,34 @@ initial begin : DBG_FAST_TEST
         t_abs_write(16'h07b0, 32'h0);
         end
 
-        // 6) resume
+        // ---- 里程碑D:软件断点(ebreak->进调试)----
+        // 经 SBA 往 DRAM 0x80200000 写 ebreak(0x00100073)+ 后面写无限循环占位
+        t_dmi(T_SBCS,    32'h0004_0000, 2'd2, dt_rd, dt_resp);
+        t_dmi(T_SBADDR0, 32'h8020_0004, 2'd2, dt_rd, dt_resp);
+        t_dmi(T_SBDATA0, 32'h0000_0073, 2'd2, dt_rd, dt_resp);   // 0x80200004: ebreak
+        // 0x80200000: 一条 nop(0x13)让 PC 自然走到 ebreak
+        t_dmi(T_SBADDR0, 32'h8020_0000, 2'd2, dt_rd, dt_resp);
+        t_dmi(T_SBDATA0, 32'h0000_0013, 2'd2, dt_rd, dt_resp);   // nop
+        repeat (40) @(posedge clk);
+        // 设 dcsr.ebreakm=1(bit15),清 step
+        t_abs_write(16'h07b0, 32'h0000_8000);
+        // 把 dpc 设到 0x80200000,resume(带重定向)
+        t_abs_write(16'h07b1, 32'h8020_0000);
+        t_dmi(T_DMCONTROL, 32'h4000_0001, 2'd2, dt_rd, dt_resp);
+        repeat (120) @(posedge clk);          // 跑 nop -> ebreak -> 命中 halt
+        t_dmi(T_DMSTATUS, 32'b0, 2'd1, dt_rd, dt_resp);
+        prv("[DBG] 断点后 dmstatus = ", dt_rd);
+        t_abs_read(16'h07b1, dt_rd);
+        prv("[DBG] 断点命中 dpc = ", dt_rd);
+        ok = (dt_rd === 32'h8020_0004);       // 应停在 ebreak 那条(0x80200004)
+        if (!ok) dt_err=dt_err+1;
+        pr(ok ? "[DBG]   软件断点(ebreak->halt):PASS" : "[DBG]   软件断点:FAIL");
+        t_abs_write(16'h07b0, 32'h0);         // 关 ebreakm
+
+        // 7) resume
         t_dmi(T_DMCONTROL, 32'h4000_0001, 2'd2, dt_rd, dt_resp);
         pr("[DBG] resume");
-        pr(dt_err==0 ? "[DBG] ===== 调试快速自测 全 PASS =====" : "[DBG] ===== 有 FAIL =====");
+        pr(dt_err==0 ? "[DBG] ===== 调试快速自测 全 PASS(halt/寄存器/单步/断点)=====" : "[DBG] ===== 有 FAIL =====");
         $fwrite(dt_f, "ERR=%0d\n", dt_err);
         $fclose(dt_f);
         $finish;

@@ -28,6 +28,11 @@ module riscv_debug
     ,output [31:0]    dbg_reg_wdata_o
     ,output           dbg_step_o
     ,input            dbg_issued_i
+    ,output           dbg_ebreakm_o
+    ,input            dbg_ebreak_i
+    ,input  [31:0]    dbg_ebreak_pc_i
+    ,output           dbg_redirect_o
+    ,output [31:0]    dbg_redirect_pc_o
     // AXI4 主口 -> soc.inport
     ,output           awvalid_o ,output [31:0] awaddr_o ,output [3:0] awid_o
     ,output [7:0]     awlen_o   ,output [1:0]  awburst_o ,input awready_i
@@ -95,6 +100,8 @@ dm_sba #(.ABITS(ABITS)) u_dm (
     ,.dbg_reg_idx_o(dbg_reg_idx_o), .dbg_reg_rdata_i(dbg_reg_rdata_i)
     ,.dbg_reg_we_o(dbg_reg_we_o), .dbg_reg_wdata_o(dbg_reg_wdata_o)
     ,.dbg_step_o(dbg_step_o), .dbg_issued_i(dbg_issued_i)
+    ,.dbg_ebreakm_o(dbg_ebreakm_o), .dbg_ebreak_i(dbg_ebreak_i), .dbg_ebreak_pc_i(dbg_ebreak_pc_i)
+    ,.dbg_redirect_o(dbg_redirect_o), .dbg_redirect_pc_o(dbg_redirect_pc_o)
 );
 
 dm_axi_master u_axi (

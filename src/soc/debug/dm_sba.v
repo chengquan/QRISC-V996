@@ -51,6 +51,12 @@ module dm_sba
     // 单步(里程碑C)
     ,output            dbg_step_o
     ,input             dbg_issued_i
+    // 断点 + 恢复重定向(里程碑D)
+    ,output            dbg_ebreakm_o
+    ,input             dbg_ebreak_i
+    ,input  [31:0]     dbg_ebreak_pc_i
+    ,output            dbg_redirect_o
+    ,output [31:0]     dbg_redirect_pc_o
 );
 
 // DMI 寄存器地址
@@ -86,6 +92,15 @@ reg        reg_we_q;
 reg        dcsr_step_q;       // 调试器设的单步标志(dcsr.step)
 reg        stepping_q;        // 正在单步窗口(已 resume,等一条指令发射)
 assign dbg_step_o = stepping_q;
+// ---- 断点 + dpc 寄存器 + 恢复重定向(里程碑D)----
+reg        dcsr_ebreakm_q;    // dcsr.ebreakm:ebreak 进调试
+reg [31:0] dpc_q;             // 调试 PC(halt 处 / ebreak 处 / 调试器改写)
+reg        bp_q;              // 本次 halt 由 ebreak 断点引起
+reg        dpc_written_q;     // 调试器改写过 dpc(resume 需重定向)
+reg        redirect_q;
+assign dbg_ebreakm_o    = dcsr_ebreakm_q;
+assign dbg_redirect_o   = redirect_q;
+assign dbg_redirect_pc_o= dpc_q;
 assign dbg_reg_idx_o   = abs_regno_q[4:0];        // GPR 号(halt 时核读此寄存器)
 assign dbg_reg_we_o    = reg_we_q;
 assign dbg_reg_wdata_o = data0_q;
@@ -154,6 +169,7 @@ if (rst_i) begin
     data0_q<=32'b0; abs_regno_q<=16'b0; abs_write_q<=1'b0; abs_go_q<=2'b0;
     abs_cmderr_q<=3'b0; reg_we_q<=1'b0;
     dcsr_step_q<=1'b0; stepping_q<=1'b0;
+    dcsr_ebreakm_q<=1'b0; dpc_q<=32'b0; bp_q<=1'b0; dpc_written_q<=1'b0; redirect_q<=1'b0;
     sbreadonaddr_q<=1'b0; sbautoincrement_q<=1'b0; sbreadondata_q<=1'b0;
     sbaccess_q<=3'd2; sberror_q<=3'd0; sbbusy_q<=1'b0; sbbusyerror_q<=1'b0;
     sbaddr_q<=32'b0; sbdata_q<=32'b0;
@@ -163,17 +179,27 @@ end else begin
     bus_req_q <= 1'b0;          // 默认拉低,仅发起那拍为 1
 
     reg_we_q <= 1'b0;           // 写 GPR 使能仅脉冲一拍
+    redirect_q <= 1'b0;         // 重定向仅脉冲一拍
+
+    // ---- 断点:核执行 ebreak(ebreakm 开启)-> 进 halt,dpc = ebreak 的 PC ----
+    if (dbg_ebreak_i && !halt_req_q && !halted_q) begin
+        halt_req_q <= 1'b1; halted_q <= 1'b0; drain_q <= 5'd0;
+        dpc_q <= dbg_ebreak_pc_i; bp_q <= 1'b1;
+    end
 
     // ---- 单步:resume 后核发射一条指令(dbg_issued)-> 立刻重新 halt ----
     if (stepping_q && dbg_issued_i) begin
         stepping_q <= 1'b0;
-        halt_req_q <= 1'b1; halted_q <= 1'b0; drain_q <= 5'd0;   // 重新排空->halted
+        halt_req_q <= 1'b1; halted_q <= 1'b0; drain_q <= 5'd0; bp_q <= 1'b0;
     end
 
-    // ---- halt 排空:halt 请求后等 ~16 拍(流水线排空)-> 视为 halted ----
+    // ---- halt 排空:halt 请求后等 ~16 拍 -> halted;到 halted 那刻锁存 dpc ----
     if (halt_req_q && !halted_q) begin
-        if (drain_q == 5'd16) halted_q <= 1'b1;
-        else                  drain_q <= drain_q + 5'd1;
+        if (drain_q == 5'd16) begin
+            halted_q <= 1'b1;
+            if (!bp_q) dpc_q <= dbg_pc_i;   // 普通 halt/单步:锁存停下处 PC(断点已锁 ebreak PC)
+        end else
+            drain_q <= drain_q + 5'd1;
     end
 
     // ---- 抽象命令两拍处理:01=已发起(idx 稳定),10=取/写结果 ----
@@ -183,13 +209,17 @@ end else begin
         if (abs_write_q) begin
             // 写:GPR -> dbg_reg_we 脉冲;dcsr -> 存 step 标志
             if (abs_is_gpr) reg_we_q <= 1'b1;
-            else if (abs_regno_q[11:0]==CSR_DCSR) dcsr_step_q <= data0_q[2];
+            else if (abs_regno_q[11:0]==CSR_DCSR) begin
+                dcsr_step_q    <= data0_q[2];   // step
+                dcsr_ebreakm_q <= data0_q[15];  // ebreakm
+            end
+            else if (abs_regno_q[11:0]==CSR_DPC) begin dpc_q <= data0_q; dpc_written_q <= 1'b1; end
         end else begin
             // 读:GPR 用核读出;CSR 用内置值
             if (abs_is_gpr)                       data0_q <= dbg_reg_rdata_i;
             else if (abs_regno_q[11:0]==CSR_MISA) data0_q <= MISA_RV32IMA;
-            else if (abs_regno_q[11:0]==CSR_DPC)  data0_q <= dbg_pc_i;
-            else if (abs_regno_q[11:0]==CSR_DCSR) data0_q <= DCSR_VAL;
+            else if (abs_regno_q[11:0]==CSR_DPC)  data0_q <= dpc_q;
+            else if (abs_regno_q[11:0]==CSR_DCSR) data0_q <= {16'b0,dcsr_ebreakm_q,12'b0,dcsr_step_q,2'b11} | DCSR_VAL;
             else                                  abs_cmderr_q <= 3'd2; // 未支持
         end
     end
@@ -217,6 +247,9 @@ end else begin
                 if (dmi_wdata_i[30]) begin           // resumereq:恢复运行
                     halt_req_q <= 1'b0; halted_q <= 1'b0;
                     if (dcsr_step_q) stepping_q <= 1'b1;  // 单步:只放一条指令
+                    // 断点命中过 或 调试器改写过 dpc -> 恢复时重定向取指到 dpc
+                    if (bp_q || dpc_written_q) redirect_q <= 1'b1;
+                    bp_q <= 1'b0; dpc_written_q <= 1'b0;
                 end
             end
             dmi_rdata_q <= {halt_req_q,30'b0, dmactive_q};
@@ -224,7 +257,10 @@ end else begin
         //--------------------------------------------------
         A_DMSTATUS: dmi_rdata_q <= dmstatus_rd;
         //--------------------------------------------------
-        A_DPC: dmi_rdata_q <= dbg_pc_i;     // 读核当前 PC(里程碑A)
+        A_DPC: begin                        // 读/写 dpc 寄存器
+            if (dmi_op_i==2'd2) begin dpc_q <= dmi_wdata_i; dpc_written_q <= 1'b1; end
+            dmi_rdata_q <= dpc_q;
+        end
         //--------------------------------------------------
         A_DATA0: begin
             if (dmi_op_i==2'd2) data0_q <= dmi_wdata_i;   // 写抽象数据

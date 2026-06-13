@@ -92,6 +92,12 @@ module riscv_core
     ,input  [ 31:0]  dbg_reg_wdata_i
     ,input           dbg_step_i
     ,output          dbg_issued_o
+    // 断点 + 恢复重定向
+    ,input           dbg_ebreakm_i
+    ,output          dbg_ebreak_o
+    ,output [ 31:0]  dbg_ebreak_pc_o
+    ,input           dbg_redirect_i
+    ,input  [ 31:0]  dbg_redirect_pc_i
 );
 
 wire           mmu_lsu_writeback_w;
@@ -291,8 +297,9 @@ u_frontend
     ,.fetch0_accept_i(fetch0_accept_w)
     ,.fetch1_accept_i(fetch1_accept_w)
     ,.fetch_invalidate_i(ifence_w)
-    ,.branch_request_i(branch_request_w)
-    ,.branch_pc_i(branch_pc_w)
+    // 调试恢复重定向:dbg_redirect_i 时把取指强制跳到 dpc(断点/dpc 修改后从此续跑)
+    ,.branch_request_i(dbg_redirect_i ? 1'b1 : branch_request_w)
+    ,.branch_pc_i(dbg_redirect_i ? dbg_redirect_pc_i : branch_pc_w)
     ,.branch_priv_i(branch_priv_w)
     ,.branch_info_request_i(branch_info_request_w)
     ,.branch_info_is_taken_i(branch_info_is_taken_w)
@@ -496,6 +503,9 @@ u_csr
     ,.mmu_mxr_o(mmu_mxr_w)
     ,.mmu_flush_o(mmu_flush_w)
     ,.mmu_satp_o(mmu_satp_w)
+    ,.dbg_ebreakm_i(dbg_ebreakm_i)
+    ,.dbg_ebreak_o(dbg_ebreak_o)
+    ,.dbg_ebreak_pc_o(dbg_ebreak_pc_o)
 );
 
 
