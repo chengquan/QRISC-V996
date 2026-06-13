@@ -120,7 +120,7 @@ initial begin : DBG_FAST_TEST
         // ---- 里程碑D:软件断点(ebreak->进调试)----
         // 用专门的写任务(每次重设 sbcs 关自增 + 写地址 + 写数据),避免地址错位
         sba_wr(32'h8020_0000, 32'h0000_0013);   // 0x80200000: nop
-        sba_wr(32'h8020_0004, 32'h0000_0073);   // 0x80200004: ebreak
+        sba_wr(32'h8020_0004, 32'h0010_0073);   // 0x80200004: ebreak (0x00100073)
         repeat (40) @(posedge clk);
         // 诊断:SBA 读回确认 nop/ebreak 真落进 DRAM
         t_dmi(T_SBCS,    32'h0014_0000, 2'd2, dt_rd, dt_resp);  // readonaddr
@@ -131,7 +131,7 @@ initial begin : DBG_FAST_TEST
         t_dmi(T_SBADDR0, 32'h8020_0004, 2'd2, dt_rd, dt_resp);
         repeat (8) @(posedge clk);
         t_dmi(T_SBDATA0, 32'b0, 2'd1, dt_rd, dt_resp);
-        prv("[DBG] (诊断)DRAM[0x80200004] = ", dt_rd);   // 期望 0x73(ebreak)
+        prv("[DBG] (诊断)DRAM[0x80200004] = ", dt_rd);   // 期望 0x00100073(ebreak)
         // 设 dcsr.ebreakm=1(bit15),清 step
         t_abs_write(16'h07b0, 32'h0000_8000);
         // 把 dpc 设到 0x80200000,resume(带重定向)

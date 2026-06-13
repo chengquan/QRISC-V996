@@ -80,6 +80,7 @@ reg        dmactive_q, ndmreset_q;
 reg        halt_req_q;          // dbg_halt_o:请求核停止发射
 reg        halted_q;            // 核已 halt(流水线排空后)
 reg [4:0]  drain_q;             // halt 请求后等若干拍当作排空完成
+reg        resumeack_q;         // dmstatus.allresumeack:resume 已确认(OpenOCD 等这位)
 assign dbg_halt_o = halt_req_q;
 // ---- 抽象命令(读写 GPR/CSR;里程碑B)----
 reg [31:0] data0_q;          // 抽象数据寄存器(读出/写入的值)
@@ -97,20 +98,28 @@ reg        dcsr_ebreakm_q;    // dcsr.ebreakm:ebreak 进调试
 reg [31:0] dpc_q;             // 调试 PC(halt 处 / ebreak 处 / 调试器改写)
 reg        bp_q;              // 本次 halt 由 ebreak 断点引起
 reg        dpc_written_q;     // 调试器改写过 dpc(resume 需重定向)
-reg [3:0]  redirect_q;        // 恢复后倒计时:到 ==2 时脉冲一拍 dbg_redirect(此时取指/issue已恢复)
+reg [3:0]  redirect_q;        // 重定向序列倒计时(见下方时序)
+reg [2:0]  dcsr_cause_q;      // dcsr.cause:1=ebreak 3=haltreq 4=step(给 OpenOCD/GDB 看停因)
 assign dbg_ebreakm_o    = dcsr_ebreakm_q;
-assign dbg_redirect_o   = (redirect_q == 4'd5) || (redirect_q == 4'd4);  // halt 未撤时注入 2 拍
+// 重定向时序:核仍 halt(冻结)时脉冲 branch_csr 把 pc_x_q+取指都设到 dpc,
+// 然后再撤 halt,核就从 dpc 干净起跑(避免先执行旧 PC 的指令再跳)。
+//   redirect_q: 6,5 = halt 中注入 redirect(==5 脉冲);4,3,2 = 仍 halt 让取指对齐 dpc;
+//               1 = 撤 halt(下一拍核从 dpc 发射);0 = 结束
+assign dbg_redirect_o   = (redirect_q == 4'd5);  // halt 中注入(pc_x_q+取指→dpc)
 assign dbg_redirect_pc_o= dpc_q;
 assign dbg_reg_idx_o   = abs_regno_q[4:0];        // GPR 号(halt 时核读此寄存器)
 assign dbg_reg_we_o    = reg_we_q;
 assign dbg_reg_wdata_o = data0_q;
 wire abs_is_gpr = (abs_regno_q[15:5]==11'h080);   // 0x1000..0x101f
-// abstractcs:[3:0]datacount=1 [10:8]cmderr [12]busy=0 [28:24]progbufsize=0
-wire [31:0] abstractcs_rd = {3'b0,5'd0,11'b0,1'b0,1'b0,abs_cmderr_q,4'b0,4'd1};
+// abstractcs:[3:0]datacount=1 [10:8]cmderr [12]busy [28:24]progbufsize=0
+// busy:命令处理中(abs_go!=0)置 1,让轮询的调试器等结果再读 data0
+wire abs_busy_w = (abs_go_q != 2'b00);
+wire [31:0] abstractcs_rd = {3'b0,5'd0,11'b0,abs_busy_w,1'b0,abs_cmderr_q,4'b0,4'd1};
 wire [31:0] dmstatus_rd =
     (1<<7) | 32'd2 |                                  // authenticated + version=2
-    (halted_q  ? ((1<<9)|(1<<8)) : 32'b0) |          // all/any halted
-    (halted_q  ? 32'b0 : ((1<<11)|(1<<10)));         // all/any running
+    (halted_q    ? ((1<<9)|(1<<8)) : 32'b0) |        // [9]allhalted [8]anyhalted
+    (halted_q    ? 32'b0 : ((1<<11)|(1<<10))) |      // [11]allrunning [10]anyrunning
+    (resumeack_q ? ((1<<17)|(1<<16)) : 32'b0);       // [17]allresumeack [16]anyresumeack
 reg        sbreadonaddr_q, sbautoincrement_q, sbreadondata_q;
 reg [2:0]  sbaccess_q;                 // 访问位宽:0=8b 1=16b 2=32b
 reg [2:0]  sberror_q;                  // 0=none 其它=错误
@@ -165,11 +174,12 @@ assign dmi_resp_o  = dmi_resp_q;
 always @(posedge clk_i or posedge rst_i)
 if (rst_i) begin
     dmactive_q<=1'b0; ndmreset_q<=1'b0;
-    halt_req_q<=1'b0; halted_q<=1'b0; drain_q<=5'd0;
+    halt_req_q<=1'b0; halted_q<=1'b0; drain_q<=5'd0; resumeack_q<=1'b0;
     data0_q<=32'b0; abs_regno_q<=16'b0; abs_write_q<=1'b0; abs_go_q<=2'b0;
     abs_cmderr_q<=3'b0; reg_we_q<=1'b0;
     dcsr_step_q<=1'b0; stepping_q<=1'b0;
     dcsr_ebreakm_q<=1'b0; dpc_q<=32'b0; bp_q<=1'b0; dpc_written_q<=1'b0; redirect_q<=4'd0;
+    dcsr_cause_q<=3'd0;
     sbreadonaddr_q<=1'b0; sbautoincrement_q<=1'b0; sbreadondata_q<=1'b0;
     sbaccess_q<=3'd2; sberror_q<=3'd0; sbbusy_q<=1'b0; sbbusyerror_q<=1'b0;
     sbaddr_q<=32'b0; sbdata_q<=32'b0;
@@ -179,22 +189,28 @@ end else begin
     bus_req_q <= 1'b0;          // 默认拉低,仅发起那拍为 1
 
     reg_we_q <= 1'b0;           // 写 GPR 使能仅脉冲一拍
-    // 重定向序列:6->5,4(注入,halt 仍在)->...->1(撤 halt,核从 dpc 续跑)->0
+    // 重定向倒计时:核仍 halt 时(redirect_q==5)脉冲 redirect 把 pc_x_q+取指设到 dpc,
+    // 多等几拍让取指真正对齐 dpc,到 ==1 才撤 halt,核就从 dpc 干净起跑。
     if (redirect_q != 4'd0) begin
         redirect_q <= redirect_q - 4'd1;
-        if (redirect_q == 4'd1) begin halt_req_q <= 1'b0; halted_q <= 1'b0; end
+        // 撤 halt 的同拍置 resumeack(此刻核真正离开 halt 开始跑)
+        if (redirect_q == 4'd1) begin halt_req_q <= 1'b0; halted_q <= 1'b0; resumeack_q <= 1'b1; end
     end
 
     // ---- 断点:核执行 ebreak(ebreakm 开启)-> 进 halt,dpc = ebreak 的 PC ----
+    // 注意:resumeack 是 sticky,只由调试器显式 haltreq/新 resumereq 清;ebreak 是
+    // 自动 halt(resume 确实发生过并被确认),保留 resumeack 让 OpenOCD 看到“已 resume->已 halt”。
     if (dbg_ebreak_i && !halt_req_q && !halted_q) begin
         halt_req_q <= 1'b1; halted_q <= 1'b0; drain_q <= 5'd0;
-        dpc_q <= dbg_ebreak_pc_i; bp_q <= 1'b1;
+        dpc_q <= dbg_ebreak_pc_i; bp_q <= 1'b1; dcsr_cause_q <= 3'd1;  // cause=ebreak
     end
 
     // ---- 单步:resume 后核发射一条指令(dbg_issued)-> 立刻重新 halt ----
+    // 同样保留 resumeack:单步是“resume 一条后自动 halt”,OpenOCD step 要先看到
+    // allresumeack 确认 resume 发生,再看到 halted —— 故此处不清 resumeack。
     if (stepping_q && dbg_issued_i) begin
         stepping_q <= 1'b0;
-        halt_req_q <= 1'b1; halted_q <= 1'b0; drain_q <= 5'd0; bp_q <= 1'b0;
+        halt_req_q <= 1'b1; halted_q <= 1'b0; drain_q <= 5'd0; bp_q <= 1'b0; dcsr_cause_q <= 3'd4;  // cause=step
     end
 
     // ---- halt 排空:halt 请求后等 ~16 拍 -> halted;到 halted 那刻锁存 dpc ----
@@ -219,12 +235,18 @@ end else begin
             end
             else if (abs_regno_q[11:0]==CSR_DPC) begin dpc_q <= data0_q; dpc_written_q <= 1'b1; end
         end else begin
-            // 读:GPR 用核读出;CSR 用内置值
+            // 读:GPR 用核读出;已建模 CSR 用内置值;其余 CSR 回 0(不报 cmderr,
+            // 否则 OpenOCD 读 mstatus 等会失败而中止。我们无核内 CSR 读口,0 是
+            // 诚实的最佳近似:halt 在 M 态、调试器据此判断也不会出错)。
             if (abs_is_gpr)                       data0_q <= dbg_reg_rdata_i;
             else if (abs_regno_q[11:0]==CSR_MISA) data0_q <= MISA_RV32IMA;
             else if (abs_regno_q[11:0]==CSR_DPC)  data0_q <= dpc_q;
-            else if (abs_regno_q[11:0]==CSR_DCSR) data0_q <= {16'b0,dcsr_ebreakm_q,12'b0,dcsr_step_q,2'b11} | DCSR_VAL;
-            else                                  abs_cmderr_q <= 3'd2; // 未支持
+            else if (abs_regno_q[11:0]==CSR_DCSR)
+                // dcsr: [31:28]xdebugver=4 [15]ebreakm [8:6]cause [2]step [1:0]prv=3
+                data0_q <= DCSR_VAL | (dcsr_ebreakm_q ? (1<<15) : 0)
+                                    | ({29'b0,dcsr_cause_q} << 6)
+                                    | (dcsr_step_q ? (1<<2) : 0);
+            else                                  data0_q <= 32'b0;     // 其余 CSR:回 0,不报错
         end
     end
 
@@ -245,15 +267,22 @@ end else begin
             if (dmi_op_i==2'd2) begin   // write
                 dmactive_q <= dmi_wdata_i[0];
                 ndmreset_q <= dmi_wdata_i[1];
+                // ndmreset 置位:复位调试 ack/单步/重定向状态(系统软复位语义)
+                if (dmi_wdata_i[1]) begin
+                    resumeack_q <= 1'b0; stepping_q <= 1'b0; redirect_q <= 4'd0;
+                    bp_q <= 1'b0; dpc_written_q <= 1'b0;
+                end
                 if (dmi_wdata_i[31]) begin           // haltreq:请求暂停
-                    halt_req_q <= 1'b1; drain_q <= 5'd0;
+                    halt_req_q <= 1'b1; drain_q <= 5'd0; resumeack_q <= 1'b0; dcsr_cause_q <= 3'd3;  // cause=haltreq
                 end
                 if (dmi_wdata_i[30]) begin           // resumereq:恢复运行
                     if (bp_q || dpc_written_q) begin
-                        // 需重定向:保持 halt,先注入 redirect(序列里第 1 拍才撤 halt)
+                        // 需重定向:保持 halt(冻结),启动重定向序列;
+                        // 序列在 halt 中把 pc_x_q+取指设到 dpc,再撤 halt 从 dpc 起跑。
+                        // resumeack 由序列在撤 halt 那拍(redirect_q==1)置位。
                         redirect_q <= 4'd6; bp_q <= 1'b0; dpc_written_q <= 1'b0;
                     end else begin
-                        halt_req_q <= 1'b0; halted_q <= 1'b0;
+                        halt_req_q <= 1'b0; halted_q <= 1'b0; resumeack_q <= 1'b1;
                         if (dcsr_step_q) stepping_q <= 1'b1;  // 单步:只放一条指令
                     end
                 end
@@ -278,12 +307,19 @@ end else begin
         end
         A_COMMAND: begin
             if (dmi_op_i==2'd2) begin       // 写 command = 发起一次 access register
-                // [31:24]cmdtype=0  [16]write  [15:0]regno  ([17]transfer)
+                // [31:24]cmdtype=0  [22:20]aarsize  [17]transfer  [16]write  [15:0]regno
                 if (dmi_wdata_i[31:24]==8'd0) begin
-                    abs_regno_q <= dmi_wdata_i[15:0];
-                    abs_write_q <= dmi_wdata_i[16];
-                    abs_go_q    <= 2'b01;
-                    abs_cmderr_q<= 3'b0;
+                    // aarsize:2=32位(我们只支持 32);3=64/4=128 不支持 -> cmderr=2。
+                    // (OpenOCD 探 XLEN 会先试 size=64,见 cmderr=2 即回退 32 -> XLEN=32。
+                    //  自测发的 aarsize=0,按 32 位处理,不拒。)
+                    if (dmi_wdata_i[22:20] > 3'd2)
+                        abs_cmderr_q <= 3'd2;          // 不支持的访问位宽
+                    else begin
+                        abs_regno_q <= dmi_wdata_i[15:0];
+                        abs_write_q <= dmi_wdata_i[16];
+                        abs_go_q    <= 2'b01;
+                        abs_cmderr_q<= 3'b0;
+                    end
                 end else
                     abs_cmderr_q <= 3'd2;    // 其它 cmdtype 不支持
             end

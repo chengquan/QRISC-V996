@@ -8,16 +8,15 @@
 [DBG] 写 x10=0x1234ABCD,读回 = 0x1234abcd
 [DBG]   写/读 GPR x10:PASS
 [DBG] 单步前 dpc = 0x8000015c
-[DBG] 单步后 dmstatus = 0x00000382
+[DBG] 单步后 dmstatus = 0x00030382
 [DBG] 单步后 dpc = 0x80000160
 [DBG]   单步(PC 前进):PASS
 [DBG] (诊断)DRAM[0x80200000] = 0x00000013
-[DBG] (诊断)DRAM[0x80200004] = 0x00000073
+[DBG] (诊断)DRAM[0x80200004] = 0x00100073
 [DBG] (诊断)resume 前 dpc 读回 = 0x80200000
-[DBG] 断点后 dmstatus = 0x00000c82
-[DBG] (诊断)未命中 -> 手动 halt 后核 PC = 0x8000005c
-[DBG] 断点命中 dpc = 0x8000005c
-[DBG]   软件断点:FAIL
+[DBG] 断点后 dmstatus = 0x00030382
+[DBG] 断点命中 dpc = 0x80200004
+[DBG]   软件断点(ebreak->halt):PASS
 [DBG] resume
-[DBG] ===== 有 FAIL =====
-ERR=1
+[DBG] ===== 调试快速自测 全 PASS(halt/寄存器/单步/断点)=====
+ERR=0

@@ -48,3 +48,6 @@ __pycache__/
 *.swp
 *~
 .DS_Store
+
+# ---- Claude Code 会话目录(本地,不入库)----
+.claude/

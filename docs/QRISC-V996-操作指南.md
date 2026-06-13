@@ -56,7 +56,9 @@ QRISC-V996/
 ├── src/                             RTL 设计
 │   ├── core/ top/ icache/ dcache/   biRISC-V 双发射核
 │   └── soc/                         riscv_soc 外设+互联 + biriscv_soc 集成顶层
-├── tb/tb_soc/                       测试平台(纯 Verilog)
+│       └── debug/                   JTAG 调试模块(jtag_dtm/dm_sba/dm_axi_master/riscv_debug)
+├── tb/tb_soc/                       测试平台(纯 Verilog,含 JTAG remote_bitbang 桥)
+├── tools/openocd/                   OpenOCD 配置 + GDB 调试说明
 ├── bootloader/                      SBI 引导器源码
 ├── build-os/                        从源码重建 OS:Makefile + 脚本 + 配置 + 内核补丁 + dts
 ├── sdk/                             写程序:baremetal/(裸机) + linux/(用户态)
@@ -89,6 +91,8 @@ sudo apt install -y verilator gtkwave device-tree-compiler \
 | device-tree-compiler | 编设备树(dts) |
 | python3-tk | GUI |
 | gcc-riscv64-unknown-elf | 裸机 SDK 工具链 |
+| openocd(可选,0.12+) | JTAG 调试客户端(第 8.5 章) |
+| gdb-multiarch(可选) | GDB 调试,连 OpenOCD 的 gdb server |
 
 > 跑预编译镜像**不需要** Linux 交叉工具链;只有从源码重建 Linux(第 9 章)才需自建
 > rv32ima-linux glibc 工具链。早期版本依赖的 libsystemc-dev / binutils-dev / libelf-dev
@@ -197,6 +201,50 @@ GUI 勾「录波形」+ 选深度 + 周期 → 启动 → 跑到周期后自停 
 - 裸机模式录波形最适合看 GPIO / SPI 引脚时序。
 
 命令行:`TRACE=1 ./tb/tb_soc/run.sh`,或裸机 `TRACE=1 ./build_run.sh ...`。
+
+---
+
+## 8.5 JTAG 调试(OpenOCD / GDB)
+
+平台带一个 **OpenOCD 兼容的 JTAG 调试模块**(RISC-V Debug Spec 0.13):JTAG TAP/DTM →
+DMI → Debug Module(`src/soc/debug/dm_sba.v`)。能力:**halt/resume、单步、软件断点
+(ebreak,编码 `0x00100073`)、读写 GPR·CSR、System Bus Access(读写内存/外设,不暂停核)**。
+所有调试逻辑都被门控,不激活时恒 0 —— **Linux 正常启动不受影响**。完整说明与踩坑见
+[`tools/openocd/README.md`](../tools/openocd/README.md)。
+
+> JTAG TAP 经 DMI 访问 Debug Module,**不占物理地址空间**;SBA 有独立 AXI 主口接 SoC 空闲
+> inport,可读写第 1/2 章里的整片内存映射(DRAM/uart/gpio/…)。
+
+### 8.5.1 快速自测(不需要 OpenOCD)
+直驱 DMI,几千周期跑完 halt→读寄存器→单步→软件断点:
+```bash
+cd tb/tb_soc
+./build_vl/tb_soc +IMAGE=image.hex +DBGTEST +MAX_CYCLES=2000000
+cat dbg_result.txt        # 期望 ERR=0,7 项全 PASS
+./build_vl/tb_soc +IMAGE=image.hex +JTAGTEST +MAX_CYCLES=3000000   # 经真 TAP 自测,全 PASS
+```
+
+### 8.5.2 真 OpenOCD 客户端
+```bash
+# 终端 A:起仿真,开 JTAG 端口
+cd tb/tb_soc && JTAG=9999 ./run.sh
+# 终端 B:连 OpenOCD(examine 通过、gdb server 起在 :3333)
+openocd -f tools/openocd/qrisc-v996.cfg
+```
+标准命令(telnet localhost 4444):`halt` / `reg pc` / `step`(PC +4) / `mdw 0x80000000` / `resume`。
+
+### 8.5.3 GDB
+```bash
+gdb-multiarch vmlinux
+(gdb) set arch riscv:rv32
+(gdb) set remotetimeout 300
+(gdb) target extended-remote :3333
+(gdb) info reg pc sp ra a0       # 读寄存器
+(gdb) x/2xw 0x80000000           # 读内存(经 SBA)
+(gdb) monitor step               # 单步(仿真里比 GDB 自带 stepi 快)
+```
+> 已用 OpenOCD 0.12 + gdb-multiarch 15.1 实测端到端通过(连接/读写寄存器/读内存/单步)。
+> 仿真里 bit-bang JTAG 慢,GDB 自带 `stepi` 每步数秒,用 `monitor step` 更快;真 FPGA 上不慢。
 
 ---
 

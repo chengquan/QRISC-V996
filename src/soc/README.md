@@ -13,6 +13,7 @@
 | gpio.v (+_defs) | GPIO |
 | spi_lite.v (+_defs) | Xilinx AXI SPI |
 | irq_ctrl.v (+_defs) | Xilinx XPS 中断控制器(汇聚各外设中断 → 核的 ext_intr) |
+| **debug/** | **JTAG 调试模块**(OpenOCD/GDB 兼容):`jtag_dtm.v`(TAP/DTM)+ `dm_sba.v`(Debug Module:dmcontrol/dmstatus/抽象命令 + SBA)+ `dm_axi_master.v`(SBA→AXI)+ `riscv_debug.v`(封装顶层)。详见 [../../tools/openocd/README.md](../../tools/openocd/README.md) |
 
 ## 内存映射(物理地址)
 | 区域 | 基址 | 说明 |
@@ -26,9 +27,15 @@
 
 复位向量 = `0x80000000`(SBI 引导器加载在此)。
 
+> **调试接口**:JTAG TAP(`debug/jtag_dtm.v`)经 DMI 与 Debug Module(`debug/dm_sba.v`)通信,
+> **不占物理地址空间**;Debug Module 经 System Bus Access(SBA)读写上表整片物理地址(不暂停核)。
+
 ## 关键集成要点(踩过的坑)
 - **AXI ID 路由**:`biriscv_soc.v` 给核传 `ICACHE_AXI_ID=4'd8`(rid[3:2]=10)、
   `DCACHE_AXI_ID=4'd4`(rid[3:2]=01)。soc 的 arb 按 `rid[3:2]` 把读响应送回对应口;
   不设对则取指口收不到响应 → 永久 stall。
 - **中断电平**:irq_ctrl 的 `intr_o` 接核 `ext_intr_i`,要求核侧 SEIP/MEIP 电平跟随
   (见 src/core 的 sticky-SEIP 修复),否则中断只来一次。
+- **debug 模块集成**:`riscv_debug.v` 封装 jtag_dtm + dm_sba,在 `biriscv_soc.v` 里与核平行实例化;
+  SBA 的 AXI 主口接 SoC 一个空闲 inport。核侧 halt/单步/读写 GPR/ebreak 的门控信号在
+  `src/core/biriscv_issue.v` 与 `biriscv_csr.v`,**调试不激活时恒 0**,不影响正常运行。

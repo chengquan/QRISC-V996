@@ -297,9 +297,8 @@ u_frontend
     ,.fetch0_accept_i(fetch0_accept_w)
     ,.fetch1_accept_i(fetch1_accept_w)
     ,.fetch_invalidate_i(ifence_w)
-    // 调试恢复重定向:dbg_redirect_i 时把取指强制跳到 dpc(断点/dpc 修改后从此续跑)
-    ,.branch_request_i(dbg_redirect_i ? 1'b1 : branch_request_w)
-    ,.branch_pc_i(dbg_redirect_i ? dbg_redirect_pc_i : branch_pc_w)
+    ,.branch_request_i(branch_request_w)
+    ,.branch_pc_i(branch_pc_w)
     ,.branch_priv_i(branch_priv_w)
     ,.branch_info_request_i(branch_info_request_w)
     ,.branch_info_is_taken_i(branch_info_is_taken_w)
@@ -614,9 +613,10 @@ u_issue
     ,.branch_d_exec1_request_i(branch_d_exec1_request_w)
     ,.branch_d_exec1_pc_i(branch_d_exec1_pc_w)
     ,.branch_d_exec1_priv_i(branch_d_exec1_priv_w)
-    ,.branch_csr_request_i(branch_csr_request_w)
-    ,.branch_csr_pc_i(branch_csr_pc_w)
-    ,.branch_csr_priv_i(branch_csr_priv_w)
+    // 调试恢复重定向:经核自带的 branch_csr 通路注入(同时改 pc_x_q + 取指,最高优先级)
+    ,.branch_csr_request_i(dbg_redirect_i ? 1'b1 : branch_csr_request_w)
+    ,.branch_csr_pc_i(dbg_redirect_i ? dbg_redirect_pc_i : branch_csr_pc_w)
+    ,.branch_csr_priv_i(dbg_redirect_i ? 2'd3 : branch_csr_priv_w)  // 重定向时保持 M 态
     ,.writeback_exec0_value_i(writeback_exec0_value_w)
     ,.writeback_exec1_value_i(writeback_exec1_value_w)
     ,.writeback_mem_valid_i(writeback_mem_valid_w)
@@ -710,8 +710,6 @@ u_issue
     ,.dbg_reg_wdata_i(dbg_reg_wdata_i)
     ,.dbg_step_i(dbg_step_i)
     ,.dbg_issued_o(dbg_issued_o)
-    ,.dbg_redirect_i(dbg_redirect_i)
-    ,.dbg_redirect_pc_i(dbg_redirect_pc_i)
 );
 
 
